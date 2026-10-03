@@ -283,3 +283,60 @@ def test_run_sync_cycle_only_calls_the_enabled_service(client, open_panel, monke
     sync.run_sync_cycle()
 
     assert calls == ["sonarr"]
+
+
+# ── Manual resolution of a review item ──────────────────────────────────────
+
+def test_resolving_a_sonarr_item_re_reads_it_from_sonarr_and_downloads(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    monkeypatch.setattr(sonarr, "get_episode", lambda eid: SONARR_EPISODE if eid == "501" else None)
+    sync.record_seen("sonarr", "501", "needs_review", "Una Serie")
+
+    outcome = sync.resolve_review_item("sonarr", "501", _series_candidate())
+
+    assert outcome == "downloading"
+    assert [name for name, _, _ in stub_jobs] == ["submit_episode"]
+    assert sync.get_seen("sonarr", "501")["status"] == "downloading"
+    assert sync.review_items("sonarr") == []
+
+
+def test_resolving_a_radarr_item_re_reads_it_from_radarr_and_downloads(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    monkeypatch.setattr(radarr, "get_movie", lambda mid: RADARR_MOVIE if mid == "601" else None)
+    sync.record_seen("radarr", "601", "not_found", "Un Film")
+
+    outcome = sync.resolve_review_item("radarr", "601", _film_candidate())
+
+    assert outcome == "downloading"
+    assert [name for name, _, _ in stub_jobs] == ["submit_film"]
+    assert sync.review_items("radarr") == []
+
+
+def test_resolving_a_gone_sonarr_episode_raises(client, open_panel, monkeypatch):
+    monkeypatch.setattr(sonarr, "get_episode", lambda eid: None)
+
+    with pytest.raises(RuntimeError):
+        sync.resolve_review_item("sonarr", "501", _series_candidate())
+
+
+def test_dismissing_an_item_removes_it_from_the_review_list(client):
+    sync.record_seen("sonarr", "501", "needs_review", "Una Serie")
+
+    sync.dismiss_review_item("sonarr", "501")
+
+    assert sync.review_items("sonarr") == []
+    assert sync.get_seen("sonarr", "501")["status"] == "dismissed"
+
+
+def test_a_dismissed_item_is_not_reprocessed_by_the_next_cycle(client, open_panel, monkeypatch):
+    sync.record_seen("sonarr", "501", "dismissed", "Una Serie")
+    match_calls = []
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1))
+
+    outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert outcome == "dismissed"
+    assert match_calls == []

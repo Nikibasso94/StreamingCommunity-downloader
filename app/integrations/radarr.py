@@ -55,6 +55,21 @@ def test_connection() -> tuple[bool, str]:
     return True, f"Radarr {status.get('version', '')} raggiunto".strip()
 
 
+def get_movie(movie_id) -> dict | None:
+    """One movie, shaped exactly like a ``wanted_missing()`` record, so a
+    manual resolution after the matcher gave up can reuse the same parsing as
+    an automatic one. ``None``, never raising, when Radarr is unreachable or
+    the movie is gone."""
+    url, api_key = get_config()
+    if not url or not api_key:
+        return None
+    try:
+        return arr_client.get(url, api_key, f"movie/{movie_id}")
+    except Exception as exc:
+        logger.warning("Radarr movie lookup failed: %s", type(exc).__name__)
+        return None
+
+
 def wanted_missing() -> list[dict]:
     """Monitored movies Radarr has not downloaded yet.
 

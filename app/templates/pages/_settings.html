@@ -635,8 +635,15 @@
         <p class="settings-section-label">Da verificare</p>
         <p class="settings-section-hint">
           Titoli che Sonarr o Radarr segnano come mancanti e che il pannello non &egrave; riuscito
-          a piazzare da s&eacute; con sufficiente sicurezza. Vanno cercati e richiesti a mano.
+          a piazzare da s&eacute; con sufficiente sicurezza. Cercali a mano, o ignorali se non
+          interessano.
         </p>
+        <div class="settings-actions mb-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-action="cfg:syncArrNow" id="sync-arr-now-btn">
+            <i class="ti ti-refresh me-1"></i>Sincronizza ora
+          </button>
+          <div id="arr-sync-feedback" class="form-text"></div>
+        </div>
         <div id="arr-review-list"></div>
       </div>
       </div>

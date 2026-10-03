@@ -64,6 +64,8 @@ CASES = [
     ((Permission.MANAGE_SETTINGS,), "GET", "/api/integrations/sonarr", None),
     ((Permission.MANAGE_SETTINGS,), "GET", "/api/integrations/radarr", None),
     ((Permission.MANAGE_SETTINGS,), "GET", "/api/integrations/sync-review", None),
+    ((Permission.MANAGE_SETTINGS,), "POST", "/api/integrations/sync-now", None),
+    ((Permission.MANAGE_SETTINGS,), "DELETE", "/api/integrations/sync-review/sonarr/1", None),
     ((Permission.REQUEST, Permission.DOWNLOAD), "GET", "/api/metadata/tv/1", None),
     ((Permission.MANAGE_SETTINGS,), "POST", "/api/domain/check", None),
     ((Permission.MANAGE_SETTINGS,), "POST", "/api/domain/candidate/apply",

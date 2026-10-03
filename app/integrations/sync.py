@@ -45,7 +45,7 @@ DEFAULT_SUBTITLES = ["ita", "eng"]
 
 # Outcomes that must not be re-attempted every cycle: the sync already placed
 # a download, or the title is already in the library.
-SETTLED_STATUSES = ("downloading", "auto_approved", "queued", "already_in_library")
+SETTLED_STATUSES = ("downloading", "auto_approved", "queued", "already_in_library", "dismissed")
 
 
 def _interval_seconds() -> int:
@@ -271,6 +271,51 @@ def process_radarr_item(domain: str, record: dict) -> str:
         outcome = "submit_failed"
     record_seen("radarr", external_key, outcome, title)
     return outcome
+
+
+# ── Manual resolution of a review item ──────────────────────────────────────
+#
+# When the matcher could not place something on its own, a human can pick the
+# right title from a search instead — reusing _place() so the result is
+# downloaded (or handed to Sonarr/Radarr's own import) exactly the way an
+# automatic match would be. The episode/movie is re-read from Sonarr/Radarr by
+# id rather than trusting anything stored in the ledger, the same reason every
+# other resolution in this panel re-reads the source rather than a snapshot.
+
+def resolve_review_item(service: str, external_key: str, candidate: dict) -> str:
+    domain = resolver.current_domain()
+
+    if service == "sonarr":
+        record = sonarr.get_episode(external_key)
+        if record is None:
+            raise RuntimeError("Episodio non più trovato su Sonarr")
+        series = record.get("series") or {}
+        title = series.get("title") or record.get("title") or "?"
+        year = str(series["year"]) if series.get("year") else None
+        season = record.get("seasonNumber")
+        episode_number = record.get("episodeNumber")
+        outcome = _place(resolver.EPISODE, domain, candidate, season, str(episode_number), title, year)
+    elif service == "radarr":
+        record = radarr.get_movie(external_key)
+        if record is None:
+            raise RuntimeError("Film non più trovato su Radarr")
+        title = record.get("title") or "?"
+        year = str(record["year"]) if record.get("year") else None
+        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year)
+    else:
+        raise ValueError(f"Servizio sconosciuto: {service!r}")
+
+    record_seen(service, external_key, outcome, title)
+    return outcome
+
+
+def dismiss_review_item(service: str, external_key: str) -> None:
+    """Acknowledge an item without downloading anything. ``dismissed`` is a
+    settled status, so the next sync cycle leaves it alone instead of putting
+    it straight back in the review list."""
+    existing = get_seen(service, external_key)
+    title = existing["title"] if existing else "?"
+    record_seen(service, external_key, "dismissed", title)
 
 
 # ── The cycle ──────────────────────────────────────────────────────────────────

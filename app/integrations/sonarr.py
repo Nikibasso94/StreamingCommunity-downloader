@@ -55,6 +55,23 @@ def test_connection() -> tuple[bool, str]:
     return True, f"Sonarr {status.get('version', '')} raggiunto".strip()
 
 
+def get_episode(episode_id) -> dict | None:
+    """One episode, shaped exactly like a ``wanted_missing()`` record — series
+    info nested under ``series`` — so a manual resolution after the matcher
+    gave up can reuse the same parsing as an automatic one. ``None``, never
+    raising, when Sonarr is unreachable or the episode is gone."""
+    url, api_key = get_config()
+    if not url or not api_key:
+        return None
+    try:
+        episode = arr_client.get(url, api_key, f"episode/{episode_id}")
+        series = arr_client.get(url, api_key, f"series/{episode['seriesId']}")
+        return {**episode, "series": series}
+    except Exception as exc:
+        logger.warning("Sonarr episode lookup failed: %s", type(exc).__name__)
+        return None
+
+
 def wanted_missing() -> list[dict]:
     """Monitored episodes Sonarr has not downloaded yet, series included.
 

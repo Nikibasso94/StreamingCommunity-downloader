@@ -6,10 +6,11 @@ save means "leave the stored one alone" rather than "erase it" — the mask is
 what the field shows, so a toggle-only save must not wipe the token under it.
 """
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from app.auth.deps import require
 from app.auth.permissions import Permission
@@ -139,3 +140,51 @@ def sync_review():
     from app.integrations import sync as arr_sync
 
     return {"items": arr_sync.review_items()}
+
+
+@router.post("/sync-now", dependencies=CAN_MANAGE)
+async def sync_now():
+    """Run the wanted-list sync immediately instead of waiting for the next
+    cycle — same shape as the "Controlla ora" button on a followed series."""
+    from app.integrations import sync as arr_sync
+
+    try:
+        return await asyncio.to_thread(arr_sync.run_sync_cycle)
+    except Exception as exc:
+        logger.exception("Manual arr sync failed")
+        raise HTTPException(status_code=502, detail=f"Sincronizzazione fallita: {exc}")
+
+
+class ReviewResolve(BaseModel):
+    service: str = Field(pattern="^(sonarr|radarr)$")
+    external_key: str
+    candidate_id: str
+    candidate_slug: str | None = None
+    candidate_poster: str | None = None
+
+
+@router.post("/sync-review/resolve", dependencies=CAN_MANAGE)
+async def resolve_sync_review(body: ReviewResolve):
+    """A human picked the right title for an item the matcher could not place."""
+    from app.integrations import sync as arr_sync
+
+    candidate = {
+        "id": body.candidate_id, "slug": body.candidate_slug, "poster": body.candidate_poster,
+    }
+    try:
+        outcome = await asyncio.to_thread(
+            arr_sync.resolve_review_item, body.service, body.external_key, candidate
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"outcome": outcome}
+
+
+@router.delete("/sync-review/{service}/{external_key}", dependencies=CAN_MANAGE)
+def dismiss_sync_review(service: str, external_key: str):
+    from app.integrations import sync as arr_sync
+
+    if service not in ("sonarr", "radarr"):
+        raise HTTPException(status_code=404, detail="Servizio sconosciuto")
+    arr_sync.dismiss_review_item(service, external_key)
+    return {"ok": True}

@@ -14,6 +14,7 @@ const _SETTINGS_FEEDBACK_IDS = [
   'domain-recovery-feedback',
   'jf-refresh-feedback', 'hooks-feedback', 'naming-feedback',
   'output-feedback', 'plex-feedback', 'sonarr-feedback', 'radarr-feedback',
+  'arr-sync-feedback',
 ];
 
 function _feedback(id, message = '', kind = 'muted') {
@@ -793,6 +794,23 @@ const saveRadarr = () => _saveArrSettings('radarr');
 const testRadarr = () => _testArrConnection('radarr');
 
 const ARR_SERVICE_LABELS = { sonarr: 'Sonarr', radarr: 'Radarr' };
+const ARR_SEARCH_MEDIA_TYPE = { sonarr: 'tv', radarr: 'movie' };
+
+async function syncArrNow() {
+  const btn = document.getElementById('sync-arr-now-btn');
+  btn.disabled = true;
+  _feedback('arr-sync-feedback', 'Sincronizzazione in corso...');
+  try {
+    const data = await api.post('/api/integrations/sync-now');
+    _feedback(
+      'arr-sync-feedback',
+      `Fatto: ${data.sonarr || 0} da Sonarr, ${data.radarr || 0} da Radarr controllati.`,
+      'success',
+    );
+    await loadArrReview();
+  } catch (e) { _feedback('arr-sync-feedback', errText(e, 'Sincronizzazione fallita.'), 'danger'); }
+  finally { btn.disabled = false; }
+}
 
 async function loadArrReview() {
   try {
@@ -808,11 +826,91 @@ function renderArrReview(items) {
     return;
   }
   container.innerHTML = items.map(item => `
-    <div class="d-flex align-items-center gap-2 border-bottom py-1">
-      <span class="badge bg-secondary-lt">${escapeHtml(ARR_SERVICE_LABELS[item.service] || item.service)}</span>
-      <span class="flex-fill text-truncate" style="color:var(--text)">${escapeHtml(item.title)}</span>
-      <span class="text-muted small">${item.status === 'not_found' ? 'id non trovato' : 'da verificare'}</span>
+    <div class="border-bottom py-1" data-review-row data-service="${escapeHtml(item.service)}"
+         data-key="${escapeHtml(item.external_key)}">
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-secondary-lt">${escapeHtml(ARR_SERVICE_LABELS[item.service] || item.service)}</span>
+        <span class="flex-fill text-truncate" style="color:var(--text)">${escapeHtml(item.title)}</span>
+        <span class="text-muted small">${item.status === 'not_found' ? 'id non trovato' : 'da verificare'}</span>
+        <button class="btn btn-sm btn-outline-secondary" data-action="cfg:arrReviewToggleSearch"
+                data-service="${escapeHtml(item.service)}" data-key="${escapeHtml(item.external_key)}"
+                data-title="${escapeHtml(item.title)}">
+          <i class="ti ti-search me-1"></i>Cerca
+        </button>
+        <button class="btn btn-sm btn-outline-danger" data-action="cfg:arrReviewDismiss"
+                data-service="${escapeHtml(item.service)}" data-key="${escapeHtml(item.external_key)}">
+          <i class="ti ti-x"></i>
+        </button>
+      </div>
+      <div class="arr-review-search mt-1" style="display:none"></div>
     </div>`).join('');
+}
+
+function arrReviewToggleSearch(service, key, title, el) {
+  const row = el.closest('[data-review-row]');
+  const panel = row.querySelector('.arr-review-search');
+  if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  if (!panel.dataset.built) {
+    panel.dataset.built = '1';
+    panel.innerHTML = `
+      <div class="d-flex gap-2 mb-1">
+        <input type="text" class="form-control form-control-sm arr-review-query" value="${escapeHtml(title)}">
+        <button class="btn btn-sm btn-primary" data-action="cfg:arrReviewDoSearch"
+                data-service="${escapeHtml(service)}" data-key="${escapeHtml(key)}">Cerca</button>
+      </div>
+      <div class="arr-review-results small"></div>`;
+  }
+}
+
+async function arrReviewDoSearch(service, key, el) {
+  const row = el.closest('[data-review-row]');
+  const query = row.querySelector('.arr-review-query').value.trim();
+  const results = row.querySelector('.arr-review-results');
+  if (!query) return;
+  results.textContent = 'Ricerca in corso...';
+  try {
+    const items = await api.get('/api/search', {
+      q: query, media_type: ARR_SEARCH_MEDIA_TYPE[service] || undefined,
+    });
+    if (!items.length) {
+      results.innerHTML = '<p class="text-muted mb-0">Nessun risultato.</p>';
+      return;
+    }
+    results.innerHTML = items.slice(0, 10).map(r => `
+      <div class="d-flex align-items-center gap-2 py-1 border-bottom">
+        <span class="flex-fill text-truncate">${escapeHtml(r.name)}
+          <span class="text-muted">${escapeHtml((r.release_date || r.last_air_date || '').slice(0, 4))}</span>
+        </span>
+        <button class="btn btn-sm btn-outline-primary" data-action="cfg:arrReviewPick"
+                data-service="${escapeHtml(service)}" data-key="${escapeHtml(key)}"
+                data-candidate-id="${escapeHtml(String(r.id))}" data-candidate-slug="${escapeHtml(r.slug || '')}"
+                data-candidate-poster="${escapeHtml(r.poster || '')}">
+          Usa questo
+        </button>
+      </div>`).join('');
+  } catch (e) { results.innerHTML = `<p class="text-danger mb-0">${escapeHtml(errText(e, 'Ricerca fallita.'))}</p>`; }
+}
+
+async function arrReviewPick(service, key, candidateId, candidateSlug, candidatePoster) {
+  if (!await scConfirm('Scaricare questo titolo per la voce selezionata?')) return;
+  try {
+    await api.post('/api/integrations/sync-review/resolve', {
+      service, external_key: key,
+      candidate_id: candidateId, candidate_slug: candidateSlug || null,
+      candidate_poster: candidatePoster || null,
+    });
+    showToast('Download avviato', 'success');
+    await loadArrReview();
+  } catch (e) { _feedback('arr-sync-feedback', errText(e, 'Risoluzione fallita.'), 'danger'); }
+}
+
+async function arrReviewDismiss(service, key) {
+  if (!await scConfirm('Ignorare questa voce? Non verrà più riproposta.')) return;
+  try {
+    await api.del(`/api/integrations/sync-review/${service}/${encodeURIComponent(key)}`);
+    await loadArrReview();
+  } catch (e) { _feedback('arr-sync-feedback', errText(e), 'danger'); }
 }
 
 // ── Plex / Sonarr / Radarr end ───────────────────────────────────────────────
@@ -1018,6 +1116,11 @@ registerActions({
   'cfg:testSonarr':       () => testSonarr(),
   'cfg:saveRadarr':       () => saveRadarr(),
   'cfg:testRadarr':       () => testRadarr(),
+  'cfg:syncArrNow':       () => syncArrNow(),
+  'cfg:arrReviewToggleSearch': (d, el) => arrReviewToggleSearch(d.service, d.key, d.title, el),
+  'cfg:arrReviewDoSearch':     (d, el) => arrReviewDoSearch(d.service, d.key, el),
+  'cfg:arrReviewPick':         d => arrReviewPick(d.service, d.key, d.candidateId, d.candidateSlug, d.candidatePoster),
+  'cfg:arrReviewDismiss':      d => arrReviewDismiss(d.service, d.key),
 });
 
 

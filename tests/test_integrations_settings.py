@@ -133,3 +133,59 @@ def test_sync_review_lists_unplaced_items(client):
     assert [i["external_key"] for i in items] == ["42"]
     assert items[0]["service"] == "sonarr"
     assert items[0]["status"] == "needs_review"
+
+
+def test_sync_now_runs_a_cycle_and_reports_a_summary(client):
+    response = client.post("/api/integrations/sync-now")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"sonarr": 0, "radarr": 0}
+
+
+def test_dismiss_removes_an_item_from_the_review_list(client):
+    from app.integrations import sync
+
+    sync.record_seen("sonarr", "42", "needs_review", "Un Titolo Qualunque")
+
+    response = client.delete("/api/integrations/sync-review/sonarr/42")
+
+    assert response.status_code == 200, response.text
+    assert client.get("/api/integrations/sync-review").json() == {"items": []}
+    assert sync.get_seen("sonarr", "42")["status"] == "dismissed"
+
+
+def test_dismiss_rejects_an_unknown_service(client):
+    response = client.delete("/api/integrations/sync-review/not-a-service/42")
+    assert response.status_code == 404
+
+
+def test_resolve_downloads_the_chosen_candidate(client, source, monkeypatch):
+    from app.integrations import radarr, sync
+
+    monkeypatch.setattr(radarr, "get_movie", lambda mid: {
+        "id": 601, "title": "Un Film", "year": 2020, "tmdbId": 12345,
+    } if mid == "601" else None)
+    calls = []
+    monkeypatch.setattr(sync, "_place", lambda *a, **k: calls.append(a) or "downloading")
+    sync.record_seen("radarr", "601", "not_found", "Un Film")
+
+    response = client.post("/api/integrations/sync-review/resolve", json={
+        "service": "radarr", "external_key": "601",
+        "candidate_id": "88", "candidate_slug": "un-film",
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"outcome": "downloading"}
+    assert len(calls) == 1
+    assert sync.get_seen("radarr", "601")["status"] == "downloading"
+
+
+def test_resolve_reports_a_gone_item_as_a_clean_error(client, monkeypatch):
+    from app.integrations import sonarr
+
+    monkeypatch.setattr(sonarr, "get_episode", lambda eid: None)
+
+    response = client.post("/api/integrations/sync-review/resolve", json={
+        "service": "sonarr", "external_key": "999", "candidate_id": "1",
+    })
+
+    assert response.status_code == 502
