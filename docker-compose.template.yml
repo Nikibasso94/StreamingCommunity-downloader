@@ -46,6 +46,16 @@ services:
       # trust X-Forwarded-For for the client address it reports to Jellyfin;
       # exposed directly, that header is attacker-controlled.
       - TRUST_PROXY_HEADERS=0
+      # Uncomment to run as a specific user/group instead of root — needed
+      # when a mounted volume is not writable by root (an NFS export with
+      # root_squash is the common case: it maps the container's root to an
+      # unprivileged "nobody" with no write access to it, even though the
+      # same share works for every container that runs as a normal user).
+      # Both volumes below need to already be writable by that uid/gid.
+      # - PUID=1000
+      # - PGID=1000
+      # Uncomment to log in your own timezone instead of UTC.
+      # - TZ=Europe/Rome
     dns:
       - 8.8.8.8
       - 1.1.1.1

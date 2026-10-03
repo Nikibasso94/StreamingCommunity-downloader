@@ -40,6 +40,9 @@ services:
       - COOKIE_SECURE=0
       - COOKIE_SAMESITE=lax
       - TRUST_PROXY_HEADERS=0
+      # - PUID=1000
+      # - PGID=1000
+      # - TZ=Europe/Rome
     dns:
       - 8.8.8.8
       - 1.1.1.1

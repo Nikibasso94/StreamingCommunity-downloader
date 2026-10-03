@@ -179,6 +179,11 @@ services:
       - COOKIE_SECURE=0
       - COOKIE_SAMESITE=lax
       - TRUST_PROXY_HEADERS=0
+      # On an NFS/NAS share with root_squash — see "PUID/PGID" below — the
+      # videos and config volumes must already be writable by this uid/gid.
+      # - PUID=1000
+      # - PGID=1000
+      # - TZ=Europe/Rome
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -395,8 +400,18 @@ failed and why.
 | `COOKIE_SECURE` | `0` | set to `1` when serving over HTTPS |
 | `COOKIE_SAMESITE` | `lax` | `none` (with `COOKIE_SECURE=1`) only to embed the panel cross-site |
 | `TRUST_PROXY_HEADERS` | `0` | set to `1` only behind a reverse proxy you control |
+| `PUID` / `PGID` | unset (root) | run as this user/group instead of root — see below |
+| `TZ` | unset (UTC) | e.g. `Europe/Rome`, for log timestamps |
 
 The source domain and the Jellyfin library paths are configurable from **Impostazioni** in the UI.
+
+**PUID/PGID.** Unset, the container runs as root exactly as it always has — this changes nothing
+for an existing deployment. Set both when a mounted volume is not writable by root: the common case
+is an NFS export with **root_squash** (the default on most NAS), which maps the container's root to
+an unprivileged "nobody" with no write access to that share, even though the same share already
+works for every other container that happens to run as a normal user. Set `PUID`/`PGID` to whichever
+uid/gid those containers use — both the videos volume **and** the config one need to already be
+writable by it, since setting this switches every file the panel writes, not only downloads.
 
 **FFmpeg and ffprobe.** `ffmpeg` is required; the Docker image installs it. Without one on `PATH`
 the panel falls back to the static binary bundled with `imageio-ffmpeg`, which is what makes it work
