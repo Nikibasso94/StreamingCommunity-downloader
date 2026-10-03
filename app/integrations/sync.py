@@ -14,18 +14,17 @@ not re-searched every cycle, and a download already placed is not
 resubmitted. Unmatched items stay visible through ``review_items()`` instead
 of being dropped silently.
 
-When a Sonarr/Radarr import folder is configured (open mode only — see
-``_place``), the file is downloaded there instead of the panel's own library,
-and ``on_job_finished`` hands it to Sonarr/Radarr's own
-``DownloadedEpisodesScan``/``DownloadedMoviesScan`` once the job completes, so
-*they* move and rename it rather than this panel. Without one, a match still
-downloads straight to the panel's library and only gets the plain rescan
-``downloads_hooks`` already does — nothing moves.
+A download this module places still downloads straight to the panel's own
+library, exactly like a manual one — this module's only job is deciding
+*what* to download and placing the job, carrying the tmdb_id (films) or
+title/season/episode (episodes) that identify it. Handing the finished file
+to Sonarr/Radarr's own import, when it is something they are missing, is
+``app.downloads_hooks``' job, and it is the same code path for a download
+this module started and one a human started by hand.
 """
 
 import asyncio
 import logging
-import threading
 
 from app import db
 from app.auth import models as auth_models
@@ -148,34 +147,25 @@ def _submit_direct_episode(domain: str, candidate: dict, season, episode_number,
     version = get_domain_version(domain) or ""
     token = get_token(tv_id, domain)
     episodes = get_info_season(tv_id, candidate.get("slug") or "", domain, version, token, season or 1)
-    import_dir = sonarr.get_import_dir()
     for index, episode in enumerate(episodes or []):
         if str(episode["n"]) == str(episode_number):
-            job_id = job_manager.submit_episode(
+            return job_manager.submit_episode(
                 tv_id, episodes, index, domain, token, title, season or 1,
                 year=year, audio_languages=DEFAULT_AUDIO, subtitle_languages=DEFAULT_SUBTITLES,
                 strict_audio=True, user_id=None,
-                output_dir=import_dir or None,
             )
-            if import_dir:
-                _track_pending_import(job_id, "sonarr")
-            return job_id
     raise EpisodeNotFoundError(f"episodio S{season}E{episode_number} non trovato per «{title}»")
 
 
-def _submit_direct_film(domain: str, candidate: dict, title: str, year: str | None) -> str:
+def _submit_direct_film(domain: str, candidate: dict, title: str, year: str | None,
+                         tmdb_id: int | None) -> str:
     from app.jobs import job_manager
 
-    import_dir = radarr.get_import_dir()
-    job_id = job_manager.submit_film(
+    return job_manager.submit_film(
         int(candidate["id"]), title, domain, year=year,
         audio_languages=DEFAULT_AUDIO, subtitle_languages=DEFAULT_SUBTITLES,
-        strict_audio=True, user_id=None,
-        output_dir=import_dir or None,
+        strict_audio=True, user_id=None, tmdb_id=tmdb_id,
     )
-    if import_dir:
-        _track_pending_import(job_id, "radarr")
-    return job_id
 
 
 def _queue_request(media_type: str, candidate: dict, season, episode_number,
@@ -209,7 +199,7 @@ def _queue_request(media_type: str, candidate: dict, season, episode_number,
 
 
 def _place(media_type: str, domain: str, candidate: dict, season, episode_number,
-           title: str, year: str | None) -> str:
+           title: str, year: str | None, tmdb_id: int | None = None) -> str:
     draft = _draft_request(media_type, candidate, season, episode_number, title, year)
     try:
         if resolver.is_in_library(draft):
@@ -221,7 +211,7 @@ def _place(media_type: str, domain: str, candidate: dict, season, episode_number
         if media_type == resolver.EPISODE:
             _submit_direct_episode(domain, candidate, season, episode_number, title, year)
         else:
-            _submit_direct_film(domain, candidate, title, year)
+            _submit_direct_film(domain, candidate, title, year, tmdb_id)
         return "downloading"
 
     return _queue_request(media_type, candidate, season, episode_number, title, year)
@@ -291,7 +281,7 @@ def process_radarr_item(domain: str, record: dict) -> str:
         return "needs_review"
 
     try:
-        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year)
+        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year, tmdb_id)
     except Exception:
         logger.exception("Radarr sync failed to submit %s", title)
         outcome = "submit_failed"
@@ -327,7 +317,7 @@ def resolve_review_item(service: str, external_key: str, candidate: dict) -> str
             raise RuntimeError("Film non più trovato su Radarr")
         title = record.get("title") or "?"
         year = str(record["year"]) if record.get("year") else None
-        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year)
+        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year, record.get("tmdbId"))
     else:
         raise ValueError(f"Servizio sconosciuto: {service!r}")
 
@@ -386,51 +376,3 @@ async def arr_sync_loop():
             await asyncio.to_thread(run_sync_cycle)
         except Exception:
             logger.exception("Arr sync cycle failed")
-
-
-# ── Handing a staging-folder download to Sonarr/Radarr's own import ───────────
-#
-# Only jobs ``_submit_direct_episode``/``_submit_direct_film`` routed into a
-# configured import folder are tracked here. Everything else — a manual
-# download, a watch, an arr-synced request placed through the queue with
-# accounts enabled — never appears in this dict, and ``on_job_finished`` is a
-# no-op for it.
-
-_pending_imports_lock = threading.Lock()
-_pending_imports: dict[str, str] = {}  # job_id -> "sonarr" | "radarr"
-
-
-def _track_pending_import(job_id: str, service: str) -> None:
-    with _pending_imports_lock:
-        _pending_imports[job_id] = service
-
-
-def on_job_finished(job) -> None:
-    with _pending_imports_lock:
-        service = _pending_imports.pop(job.job_id, None)
-    if service is None or job.status != "done":
-        return
-    if service == "sonarr":
-        import_dir = sonarr.get_import_dir()
-        if import_dir:
-            sonarr.import_scan(import_dir)
-    elif service == "radarr":
-        import_dir = radarr.get_import_dir()
-        if import_dir:
-            radarr.import_scan(import_dir)
-
-
-_listener_registered = False
-_listener_lock = threading.Lock()
-
-
-def register_import_listener():
-    """Register once, from the app lifespan, alongside the other job listeners."""
-    global _listener_registered
-    with _listener_lock:
-        if _listener_registered:
-            return
-        from app.jobs import job_manager
-
-        job_manager.add_listener(on_job_finished)
-        _listener_registered = True

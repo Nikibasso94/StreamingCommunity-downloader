@@ -572,13 +572,10 @@
           <input class="form-check-input" type="checkbox" id="sonarr-sync-wanted">
           <span class="form-check-label">Scarica automaticamente ci&ograve; che Sonarr segna come mancante</span>
         </label>
-        <label class="form-label mt-2" for="sonarr-import-dir">Cartella di importazione (opzionale)</label>
-        <input type="text" id="sonarr-import-dir" class="form-control" placeholder="/dati/import/sonarr">
         <p class="settings-section-hint">
-          Una cartella che anche Sonarr vede (stesso volume). Se impostata, l&rsquo;episodio viene
-          scaricato l&igrave; e poi &egrave; Sonarr stesso a spostarlo e rinominarlo nella sua libreria.
-          Vuota: il file resta nella libreria configurata qui, e a Sonarr si chiede solo un rescan.
-          Disponibile solo in modalit&agrave; senza account.
+          A fine download, se il titolo risulta mancante su Sonarr, il pannello sposta il file
+          direttamente nella cartella che Sonarr gi&agrave; associa a quella serie e gli chiede di
+          aggiornarsi solo per quella &mdash; nessuna cartella da configurare.
         </p>
         <div class="settings-actions">
           <button type="button" class="btn btn-primary btn-sm" data-action="cfg:saveSonarr" id="save-sonarr-btn">
@@ -611,13 +608,10 @@
           <input class="form-check-input" type="checkbox" id="radarr-sync-wanted">
           <span class="form-check-label">Scarica automaticamente ci&ograve; che Radarr segna come mancante</span>
         </label>
-        <label class="form-label mt-2" for="radarr-import-dir">Cartella di importazione (opzionale)</label>
-        <input type="text" id="radarr-import-dir" class="form-control" placeholder="/dati/import/radarr">
         <p class="settings-section-hint">
-          Una cartella che anche Radarr vede (stesso volume). Se impostata, il film viene
-          scaricato l&igrave; e poi &egrave; Radarr stesso a spostarlo e rinominarlo nella sua libreria.
-          Vuota: il file resta nella libreria configurata qui, e a Radarr si chiede solo un rescan.
-          Disponibile solo in modalit&agrave; senza account.
+          A fine download, se il titolo risulta mancante su Radarr, il pannello sposta il file
+          direttamente nella cartella che Radarr gi&agrave; associa a quel film e gli chiede di
+          aggiornarsi solo per quello &mdash; nessuna cartella da configurare.
         </p>
         <div class="settings-actions">
           <button type="button" class="btn btn-primary btn-sm" data-action="cfg:saveRadarr" id="save-radarr-btn">

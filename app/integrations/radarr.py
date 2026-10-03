@@ -1,4 +1,4 @@
-"""Radarr: reading its wanted-movie list and rescanning after a download."""
+"""Radarr: reading its wanted-movie list and importing a download into it."""
 
 import logging
 
@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 SETTING_RADARR_URL = "radarr_url"
 SETTING_RADARR_API_KEY = "radarr_api_key"
-SETTING_RADARR_IMPORT_DIR = "radarr_import_dir"
 
 
 def get_config() -> tuple[str, str]:
@@ -22,21 +21,6 @@ def get_config() -> tuple[str, str]:
 def set_config(url: str, api_key: str) -> None:
     auth_models.set_setting(SETTING_RADARR_URL, (url or "").strip())
     auth_models.set_setting(SETTING_RADARR_API_KEY, (api_key or "").strip())
-
-
-def get_import_dir() -> str:
-    """A staging folder Radarr itself can see, or "" when imports are off.
-
-    When set, a synced movie is downloaded here instead of the panel's own
-    library, and ``import_scan`` asks Radarr to move it from here into its
-    own — Radarr matches the file by parsing its name, so this is unset by
-    default rather than guessed at.
-    """
-    return (auth_models.get_setting(SETTING_RADARR_IMPORT_DIR) or "").strip()
-
-
-def set_import_dir(path: str) -> None:
-    auth_models.set_setting(SETTING_RADARR_IMPORT_DIR, (path or "").strip())
 
 
 def is_connected() -> bool:
@@ -77,7 +61,7 @@ def find_missing_movie(tmdb_id: int) -> dict | None:
 
     Checked after *any* finished film, not only ones the sync submitted, so
     a manually downloaded film that happens to be on Radarr's own missing
-    list gets the same move-and-rename handoff a synced one would — see
+    list gets the same move-and-import handoff a synced one would — see
     ``app.downloads_hooks._maybe_refresh_radarr``. Matched on tmdb_id, the
     same id ``app.integrations.matching`` confirms a sync match against, so
     this is exact or nothing, never a title that merely sounds right.
@@ -113,11 +97,10 @@ def wanted_missing() -> list[dict]:
 
 
 def rescan_movie(movie_id: int | None = None) -> bool:
-    """``movie_id`` omitted rescans every movie.
-
-    A rescan only confirms a file that is already in the right place; it
-    moves nothing. See ``import_scan`` for the staging-folder handoff.
-    """
+    """``movie_id`` omitted rescans every movie; given, it is scoped to just
+    that one — use it once ``import_into_library`` has placed a file in its
+    folder, so Radarr recognises it without scanning the whole library for
+    one new file."""
     url, api_key = get_config()
     if not url or not api_key:
         logger.info("Radarr rescan skipped: not configured")
@@ -126,19 +109,20 @@ def rescan_movie(movie_id: int | None = None) -> bool:
     return arr_client.post_command(url, api_key, "RescanMovie", **fields)
 
 
-def import_scan(path: str) -> bool:
-    """Ask Radarr to import whatever finished movie sits in ``path``.
+def import_into_library(output_path: str, movie: dict) -> bool:
+    """Move a finished download into ``movie``'s own folder and have Radarr
+    pick it up from there.
 
-    Unlike ``rescan_movie``, this moves the file: Radarr scans ``path``,
-    matches it against its monitored movies, and relocates it into its own
-    library under its own naming. ``path`` has to be something Radarr's own
-    filesystem can see — normally the same staging folder this panel
-    downloaded into, on a volume shared with it.
+    Verified against a real Radarr: this is the combination that actually
+    works, and the only one that does. Radarr's "scan this folder and
+    import" command (``DownloadedMoviesScan``) is for a download its own
+    download-client tracking already knows about — pointed at an arbitrary
+    folder it has no history for, it silently finds nothing, even mounted
+    and reachable. A plain ``RescanMovie``, scoped to one movie whose folder
+    now actually holds a file, has no such requirement — and does not care
+    what the file is named, only that it is there.
     """
-    url, api_key = get_config()
-    if not url or not api_key:
-        logger.info("Radarr import scan skipped: not configured")
+    new_path = arr_client.place_in_library(output_path, movie["path"])
+    if new_path is None:
         return False
-    return arr_client.post_command(
-        url, api_key, "DownloadedMoviesScan", path=path, importMode="Move"
-    )
+    return rescan_movie(movie["id"])

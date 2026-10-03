@@ -1,4 +1,4 @@
-"""Sonarr: reading its wanted-episode list and rescanning after a download."""
+"""Sonarr: reading its wanted-episode list and importing a download into it."""
 
 import logging
 
@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 SETTING_SONARR_URL = "sonarr_url"
 SETTING_SONARR_API_KEY = "sonarr_api_key"
-SETTING_SONARR_IMPORT_DIR = "sonarr_import_dir"
 
 
 def get_config() -> tuple[str, str]:
@@ -22,21 +21,6 @@ def get_config() -> tuple[str, str]:
 def set_config(url: str, api_key: str) -> None:
     auth_models.set_setting(SETTING_SONARR_URL, (url or "").strip())
     auth_models.set_setting(SETTING_SONARR_API_KEY, (api_key or "").strip())
-
-
-def get_import_dir() -> str:
-    """A staging folder Sonarr itself can see, or "" when imports are off.
-
-    When set, a synced episode is downloaded here instead of the panel's own
-    library, and ``import_scan`` asks Sonarr to move it from here into its
-    own — Sonarr parses the filename to tell which episode it is, so this is
-    unset by default rather than guessed at.
-    """
-    return (auth_models.get_setting(SETTING_SONARR_IMPORT_DIR) or "").strip()
-
-
-def set_import_dir(path: str) -> None:
-    auth_models.set_setting(SETTING_SONARR_IMPORT_DIR, (path or "").strip())
 
 
 def is_connected() -> bool:
@@ -80,10 +64,14 @@ def find_missing_episode(series_title: str, season: int, episode_number) -> dict
 
     Checked after *any* finished episode, not only ones the sync submitted,
     so a manually downloaded episode that happens to be on Sonarr's own
-    missing list gets the same move-and-rename handoff a synced one would —
+    missing list gets the same move-and-import handoff a synced one would —
     see ``app.downloads_hooks._maybe_refresh_sonarr``. The source gives no
     id to confirm a series by, so the series itself is matched by title the
     same conservative way ``app.integrations.matching`` does for the sync.
+
+    The series is embedded under ``series``, the same shape ``get_episode``
+    already returns, since placing the file needs the series' own folder
+    (``series["path"]``), not just which episode it is.
     """
     url, api_key = get_config()
     if not url or not api_key:
@@ -112,7 +100,7 @@ def find_missing_episode(series_title: str, season: int, episode_number) -> dict
     for episode in episodes or []:
         if episode.get("seasonNumber") == season and str(episode.get("episodeNumber")) == str(episode_number) \
                 and episode.get("monitored") and not episode.get("hasFile"):
-            return episode
+            return {**episode, "series": best}
     return None
 
 
@@ -134,12 +122,10 @@ def wanted_missing() -> list[dict]:
 
 
 def rescan_series(series_id: int | None = None) -> bool:
-    """``series_id`` omitted rescans every series — the same "one switch,
-    whole library" shape as the Jellyfin/Plex refresh.
-
-    A rescan only confirms a file that is already in the right place; it
-    moves nothing. See ``import_scan`` for the staging-folder handoff.
-    """
+    """``series_id`` omitted rescans every series; given, it is scoped to
+    just that one — use it once ``import_into_library`` has placed a file in
+    its folder, so Sonarr recognises it without scanning the whole library
+    for one new episode."""
     url, api_key = get_config()
     if not url or not api_key:
         logger.info("Sonarr rescan skipped: not configured")
@@ -148,19 +134,25 @@ def rescan_series(series_id: int | None = None) -> bool:
     return arr_client.post_command(url, api_key, "RescanSeries", **fields)
 
 
-def import_scan(path: str) -> bool:
-    """Ask Sonarr to import whatever finished episode sits in ``path``.
+def import_into_library(output_path: str, episode: dict) -> bool:
+    """Move a finished download into the episode's series folder and have
+    Sonarr pick it up from there.
 
-    Unlike ``rescan_series``, this moves the file: Sonarr scans ``path``,
-    parses the filename to work out which episode it is, and relocates it
-    into its own library under its own naming. ``path`` has to be something
-    Sonarr's own filesystem can see — normally the same staging folder this
-    panel downloaded into, on a volume shared with it.
+    Verified against a real Sonarr: this is the combination that actually
+    works, and the only one that does. Sonarr's "scan this folder and
+    import" command (``DownloadedEpisodesScan``) is for a download its own
+    download-client tracking already knows about — pointed at an arbitrary
+    folder it has no history for, it silently finds nothing, even mounted
+    and reachable. A plain ``RescanSeries``, scoped to the series whose
+    folder now actually holds a file, has no such requirement. It does
+    still need a season/episode number somewhere in the filename to tell
+    episodes apart within the series — unlike a film, where the whole
+    folder is unambiguously one title — but not Sonarr's own naming scheme;
+    an arbitrary name carrying "S01E04" was picked up exactly like one
+    carrying its preferred format.
     """
-    url, api_key = get_config()
-    if not url or not api_key:
-        logger.info("Sonarr import scan skipped: not configured")
+    series = episode.get("series") or {}
+    new_path = arr_client.place_in_library(output_path, series["path"])
+    if new_path is None:
         return False
-    return arr_client.post_command(
-        url, api_key, "DownloadedEpisodesScan", path=path, importMode="Move"
-    )
+    return rescan_series(series["id"])

@@ -549,30 +549,25 @@ mistake a retry fixes:
 episode — a manual search, a followed series, the sync, it makes no difference — the post-download
 refresh checks whether it is something Radarr/Sonarr themselves are missing: a film by the exact
 tmdb_id match described above, an episode by the same title-and-year-bar series match plus its
-season/episode number. A hit is handed to Sonarr's/Radarr's own import from wherever the file
-actually landed — no import folder required, since it is scanning the real destination, not a
-staging one. No hit just falls back to the plain rescan described above.
+season/episode number. On a hit, the panel moves the file into the folder Radarr/Sonarr *already*
+have for that title — read from their own API, nothing configured here — and asks for a rescan
+scoped to just that one. No hit just falls back to the plain, unscoped rescan described above.
 
-**Letting Sonarr/Radarr move the file themselves.** In **modalità aperta** (no Jellyfin login,
-Settings → Access → "Continua senza Jellyfin"), each connector also takes an optional **import
-folder** — a path mounted into both this panel's container and Sonarr's/Radarr's, e.g. the same
-Docker volume under two different mount points. Set it and a synced download lands there instead of
-in this panel's own library; once the job finishes, the panel calls Sonarr's/Radarr's own
-`DownloadedEpisodesScan`/`DownloadedMoviesScan`, and *they* parse the filename, rename it and move it
-into their library, the same as any other completed download they import. Leave it blank to keep the
-simpler behaviour above: the file stays in this panel's library, and Sonarr/Radarr only get asked to
-rescan.
+This is deliberately not Radarr's/Sonarr's "scan a downloads folder and import" command
+(`DownloadedMoviesScan`/`DownloadedEpisodesScan`): that command is for a release their own download
+client tracking already knows about, and pointed at a folder with no such history it does nothing —
+verified against a real Radarr and Sonarr while building this, mounted and reachable included.
+Moving the file into the title's own folder and asking for a rescan scoped to it is the combination
+that actually works, and it needs no extra folder, no extra mount, and no naming scheme — Radarr and
+Sonarr were each checked against a file carrying an unrelated name and found it regardless, as long
+as it sits in the right folder (Sonarr still needs a season/episode number *somewhere* in the name,
+to tell episodes apart within one series — a film's whole folder is unambiguously one title).
 
-Two things worth knowing before turning the import folder on:
-
-- Matching relies on Sonarr/Radarr being able to **parse the downloaded filename** — season and
-  episode, or title and year. Check **Impostazioni → Nomi** produces something they recognise before
-  relying on it unattended.
-- The import handoff is **open-mode only** for now. With a Jellyfin login configured, a synced match
-  still goes through the normal request queue and lands in this panel's library with a plain rescan
-  afterwards — not through Sonarr/Radarr's import. The queue path also needs an owning user
-  (`arr_managed_by_user_id` in `data.json`) for every synced request; there is no UI for it yet, so
-  without one the sync leaves every match in the review list rather than guessing who it belongs to.
+Owning a request queued with accounts enabled is still a gap worth knowing: a sync match placed
+through the normal request queue needs an owning user (`arr_managed_by_user_id` in `data.json`) —
+there is no UI for it yet, so without one the sync leaves every match in the review list rather than
+guessing who it belongs to. The move-and-rescan handoff itself has no such limit — it runs the same
+way whether accounts are on or off.
 
 ---
 

@@ -40,7 +40,6 @@ class ArrSettings(BaseModel):
     api_key: str = ""
     refresh_on_download: bool = False
     sync_wanted: bool = False
-    import_dir: str = ""
 
 
 def _plex_payload() -> dict:
@@ -63,7 +62,6 @@ def _arr_payload(module, refresh_key: str, sync_key: str) -> dict:
         "connected": module.is_connected(),
         "refresh_on_download": bool(settings.get(refresh_key)),
         "sync_wanted": bool(settings.get(sync_key)),
-        "import_dir": module.get_import_dir(),
     }
 
 
@@ -95,7 +93,6 @@ def get_sonarr():
 def put_sonarr(body: ArrSettings):
     _, current_key = sonarr.get_config()
     sonarr.set_config(body.url, body.api_key or current_key)
-    sonarr.set_import_dir(body.import_dir)
     save_settings({
         **get_settings(),
         "sonarr_refresh_on_download": body.refresh_on_download,
@@ -119,7 +116,6 @@ def get_radarr():
 def put_radarr(body: ArrSettings):
     _, current_key = radarr.get_config()
     radarr.set_config(body.url, body.api_key or current_key)
-    radarr.set_import_dir(body.import_dir)
     save_settings({
         **get_settings(),
         "radarr_refresh_on_download": body.refresh_on_download,

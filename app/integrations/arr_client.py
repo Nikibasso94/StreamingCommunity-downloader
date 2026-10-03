@@ -6,7 +6,10 @@ one client serves both; ``app.integrations.sonarr``/``radarr`` only know their
 own resource and command names.
 """
 
+import glob
 import logging
+import os
+import shutil
 
 import requests
 
@@ -78,3 +81,37 @@ def wanted_missing_all(
         if len(batch) < page_size:
             break
     return records
+
+
+def place_in_library(output_path: str, target_dir: str) -> str | None:
+    """Move a finished download (and any sidecar sharing its stem — mainly a
+    subtitle) into ``target_dir``, which Sonarr/Radarr already consider that
+    movie's or series' own folder.
+
+    Verified against real Sonarr and Radarr: ``RescanMovie``/``RescanSeries``
+    recognise a file sitting in that exact folder regardless of its name —
+    scoped to one title, there is no ambiguity to resolve by parsing a
+    filename the way there would be scanning an arbitrary folder. That is
+    also why this moves the file there directly instead of asking
+    Sonarr/Radarr to import it from wherever it landed:
+    ``DownloadedMoviesScan``/``DownloadedEpisodesScan`` target a download
+    client's own completed-downloads folder, tied to a grab Sonarr/Radarr
+    themselves made, and found nothing for a file with no such history even
+    with the path mounted and reachable.
+
+    Returns the file's new path, or ``None`` if the move failed — logged,
+    never raised, since the caller falls back to a blind rescan either way.
+    """
+    stem = os.path.splitext(output_path)[0]
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        new_path = None
+        for sibling in glob.glob(f"{stem}.*"):
+            destination = os.path.join(target_dir, os.path.basename(sibling))
+            shutil.move(sibling, destination)
+            if os.path.abspath(sibling) == os.path.abspath(output_path):
+                new_path = destination
+        return new_path
+    except Exception:
+        logger.exception("Could not move %s into %s", output_path, target_dir)
+        return None

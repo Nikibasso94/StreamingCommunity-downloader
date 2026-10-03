@@ -24,7 +24,6 @@ the other end said.
 
 import json
 import logging
-import os
 import threading
 
 import requests
@@ -275,13 +274,12 @@ def _maybe_refresh_plex() -> None:
 
 def _maybe_refresh_sonarr(job) -> None:
     """Rescan, or — when this episode is one Sonarr itself is missing, found
-    by title and season/episode the same way the sync does — hand it to
-    Sonarr's own import instead, straight from wherever it just landed.
+    by title and season/episode the same way the sync does — move it into
+    Sonarr's own folder for that series and rescan just that series.
 
     Works for *any* finished episode, not only ones the sync submitted: a
     manually downloaded episode that happens to be on Sonarr's own missing
-    list gets the same move-and-rename handoff. No staging folder needed —
-    the scan points at the file's actual directory.
+    list gets the same handoff.
     """
     from app.config import get_settings
     from app.integrations import sonarr
@@ -295,8 +293,7 @@ def _maybe_refresh_sonarr(job) -> None:
     output_path = getattr(job, "output_path", None)
     if job.type == "episode" and media_label and season is not None and episode_number and output_path:
         episode = sonarr.find_missing_episode(media_label, season, episode_number)
-        if episode is not None:
-            sonarr.import_scan(os.path.dirname(output_path))
+        if episode is not None and sonarr.import_into_library(output_path, episode):
             return
 
     sonarr.rescan_series()
@@ -304,13 +301,12 @@ def _maybe_refresh_sonarr(job) -> None:
 
 def _maybe_refresh_radarr(job) -> None:
     """Rescan, or — when this film is one Radarr itself is missing, matched
-    by the exact tmdb_id rather than a guess — hand it to Radarr's own
-    import instead, straight from wherever it just landed.
+    by the exact tmdb_id rather than a guess — move it into Radarr's own
+    folder for that movie and rescan just that movie.
 
     Works for *any* finished film, not only ones the sync submitted: a
     manually downloaded film that happens to be on Radarr's own missing list
-    gets the same move-and-rename handoff. No staging folder needed — the
-    scan points at the file's actual directory.
+    gets the same handoff.
     """
     from app.config import get_settings
     from app.integrations import radarr
@@ -322,8 +318,7 @@ def _maybe_refresh_radarr(job) -> None:
     output_path = getattr(job, "output_path", None)
     if job.type == "film" and tmdb_id and output_path:
         movie = radarr.find_missing_movie(tmdb_id)
-        if movie is not None:
-            radarr.import_scan(os.path.dirname(output_path))
+        if movie is not None and radarr.import_into_library(output_path, movie):
             return
 
     radarr.rescan_movie()

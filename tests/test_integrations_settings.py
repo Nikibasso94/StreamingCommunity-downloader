@@ -109,13 +109,6 @@ def test_arr_test_connection_reports_missing_config(client, service):
     assert response.json() == {"ok": False, "detail": "URL o API key non configurati"}
 
 
-@pytest.mark.parametrize("service", ["sonarr", "radarr"])
-def test_the_import_dir_round_trips(client, service):
-    response = client.put(f"/api/integrations/{service}", json={
-        "url": "http://x.local", "api_key": "k", "import_dir": "/data/import",
-    })
-    assert response.json()["import_dir"] == "/data/import"
-    assert client.get(f"/api/integrations/{service}").json()["import_dir"] == "/data/import"
 
 
 def test_sync_review_is_empty_with_nothing_recorded(client):

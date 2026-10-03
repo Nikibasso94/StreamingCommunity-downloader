@@ -97,9 +97,6 @@ async def lifespan(app: FastAPI):
     # Third and last: outbound side effects only, so it can neither delay a
     # request's own row nor swallow a notification if it fails.
     downloads_hooks.register_hook_listener()
-    # Independent of the above: only fires for the jobs it submitted itself
-    # into a Sonarr/Radarr staging folder. See app.integrations.sync.
-    arr_sync.register_import_listener()
     # Before anything can approve or complete a request: any row still
     # "approved" or "downloading" from a previous run has no in-memory worker
     # left, and never will — it needs recovering before the app is reachable.

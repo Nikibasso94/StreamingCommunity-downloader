@@ -7,22 +7,11 @@ source and a throwaway library, the same fixture app.watches' own poller
 tests use for exactly this reason.
 """
 
-from types import SimpleNamespace
-
 import pytest
 
 from app.integrations import matching, radarr, sonarr, sync
 from app.requests import models as request_models
 from tests.conftest import enable_open_mode, make_user
-
-
-@pytest.fixture(autouse=True)
-def _clear_pending_imports():
-    """Module-level tracking dict; a leaked entry would cross test boundaries
-    since job ids from ``stub_jobs`` restart at "job-1" every test."""
-    sync._pending_imports.clear()
-    yield
-    sync._pending_imports.clear()
 
 SONARR_EPISODE = {
     "id": 501, "seriesId": 10, "seasonNumber": 1, "episodeNumber": 4,
@@ -198,22 +187,15 @@ def test_with_a_managed_by_user_the_sync_queues_and_auto_approves(
     assert requests[0].requested_by == user.id
 
 
-# ── Handoff to Sonarr/Radarr's own import ───────────────────────────────────
+# ── The job carries what app.downloads_hooks needs to find it on Radarr ────
+#
+# Handing a finished download to Radarr/Sonarr's own import is
+# app.downloads_hooks' job, done the same way for every job regardless of
+# where it came from — see tests/test_download_hooks_arr_match.py. All this
+# module has to get right is tagging the job with Radarr's tmdb_id, so that
+# code can look the film back up.
 
-def test_a_configured_import_dir_becomes_the_download_s_output_dir(
-    client, open_panel, stub_jobs, monkeypatch,
-):
-    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
-    sonarr.set_import_dir("/staging/sonarr")
-    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
-
-    sync.process_sonarr_item("example.test", SONARR_EPISODE)
-
-    _, _, kwargs = stub_jobs[0]
-    assert kwargs["output_dir"] == "/staging/sonarr"
-
-
-def test_without_an_import_dir_the_download_uses_the_default_output(
+def test_a_direct_film_download_carries_radarr_s_tmdb_id(
     client, open_panel, stub_jobs, monkeypatch,
 ):
     monkeypatch.setattr(matching, "match_film", lambda *a, **k: _film_candidate())
@@ -221,74 +203,18 @@ def test_without_an_import_dir_the_download_uses_the_default_output(
     sync.process_radarr_item("example.test", RADARR_MOVIE)
 
     _, _, kwargs = stub_jobs[0]
-    assert kwargs["output_dir"] is None
+    assert kwargs["tmdb_id"] == RADARR_MOVIE["tmdbId"]
 
 
-def test_a_finished_tracked_job_triggers_sonarr_import_scan(
+def test_resolving_a_radarr_item_by_hand_also_carries_its_tmdb_id(
     client, open_panel, stub_jobs, monkeypatch,
 ):
-    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
-    sonarr.set_import_dir("/staging/sonarr")
-    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
-    calls = []
-    monkeypatch.setattr(sonarr, "import_scan", lambda path: calls.append(path) or True)
+    monkeypatch.setattr(radarr, "get_movie", lambda mid: RADARR_MOVIE if mid == "601" else None)
 
-    sync.process_sonarr_item("example.test", SONARR_EPISODE)
-    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="done"))
+    sync.resolve_review_item("radarr", "601", _film_candidate())
 
-    assert calls == ["/staging/sonarr"]
-
-
-def test_a_finished_tracked_job_triggers_radarr_import_scan(
-    client, open_panel, stub_jobs, monkeypatch,
-):
-    radarr.set_import_dir("/staging/radarr")
-    monkeypatch.setattr(matching, "match_film", lambda *a, **k: _film_candidate())
-    calls = []
-    monkeypatch.setattr(radarr, "import_scan", lambda path: calls.append(path) or True)
-
-    sync.process_radarr_item("example.test", RADARR_MOVIE)
-    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="done"))
-
-    assert calls == ["/staging/radarr"]
-
-
-def test_an_untracked_job_never_triggers_an_import_scan(client, monkeypatch):
-    calls = []
-    monkeypatch.setattr(sonarr, "import_scan", lambda path: calls.append(path) or True)
-
-    sync.on_job_finished(SimpleNamespace(job_id="some-other-job", status="done"))
-
-    assert calls == []
-
-
-def test_a_failed_tracked_job_does_not_trigger_an_import_scan(
-    client, open_panel, stub_jobs, monkeypatch,
-):
-    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
-    sonarr.set_import_dir("/staging/sonarr")
-    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
-    calls = []
-    monkeypatch.setattr(sonarr, "import_scan", lambda path: calls.append(path) or True)
-
-    sync.process_sonarr_item("example.test", SONARR_EPISODE)
-    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="error"))
-
-    assert calls == []
-    # The entry is consumed either way: a manual retry gets a new job id, and
-    # nothing should fire again for the one that failed.
-    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="done"))
-    assert calls == []
-
-
-def test_a_manual_download_with_no_import_dir_is_never_tracked(
-    client, open_panel, stub_jobs, monkeypatch,
-):
-    """Downloads that never went through _submit_direct_* — a watch, a manual
-    request — must not accidentally trigger an import scan."""
-    assert sync._pending_imports == {}
-    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="done"))
-    assert sync._pending_imports == {}
+    _, _, kwargs = stub_jobs[0]
+    assert kwargs["tmdb_id"] == RADARR_MOVIE["tmdbId"]
 
 
 # ── The cycle respects its settings ─────────────────────────────────────────
