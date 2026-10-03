@@ -13,7 +13,7 @@ const _SETTINGS_FEEDBACK_IDS = [
   'jf-connect-feedback', 'jf-reconnect-feedback', 'notif-channels-feedback',
   'domain-recovery-feedback',
   'jf-refresh-feedback', 'hooks-feedback', 'naming-feedback',
-  'output-feedback',
+  'output-feedback', 'plex-feedback', 'sonarr-feedback', 'radarr-feedback',
 ];
 
 function _feedback(id, message = '', kind = 'muted') {
@@ -39,6 +39,9 @@ const _SETTINGS_TAB_LOADERS = {
   accesso: () => loadJellyfinSettings(),
   notifiche: () => loadNotificationChannels(),
   hook: () => Promise.all([loadJellyfinRefresh(), loadHooks()]),
+  integrazioni: () => Promise.all([
+    loadPlexSettings(), loadSonarrSettings(), loadRadarrSettings(), loadArrReview(),
+  ]),
 };
 
 // Two panes read the same endpoint. Shared per modal-open so switching between
@@ -54,7 +57,8 @@ function _loadAppSettings() {
 
 // Tabs whose panes only talk to MANAGE_SETTINGS endpoints: without it they would
 // render as empty panes fed by 403s.
-const _SETTINGS_TABS_NEED_MANAGE = ['sorgente', 'librerie', 'nomi', 'download', 'notifiche', 'hook'];
+const _SETTINGS_TABS_NEED_MANAGE =
+  ['sorgente', 'librerie', 'nomi', 'download', 'notifiche', 'hook', 'integrazioni'];
 
 let _settingsTab = 'sorgente';
 const _settingsLoaded = new Set();
@@ -700,6 +704,119 @@ async function testHook(id) {
 
 // ── Post-download hooks end ────────────────────────────────────────────────────
 
+// ── Plex / Sonarr / Radarr ───────────────────────────────────────────────────
+//
+// A blank secret field on save means "leave it alone": the field shows only a
+// mask of whatever is stored, so saving an unrelated toggle must not blank the
+// credential under it. See app/routers/integrations.py.
+
+async function loadPlexSettings() {
+  try {
+    const data = await api.get('/api/integrations/plex');
+    document.getElementById('plex-url').value = data.url || '';
+    document.getElementById('plex-refresh-on-download').checked = !!data.refresh_on_download;
+    document.getElementById('plex-token-current').textContent =
+      data.token_masked ? `Token attuale: ${data.token_masked}` : '';
+  } catch (e) { /* the form simply stays as it was */ }
+}
+
+async function savePlex() {
+  const btn = document.getElementById('save-plex-btn');
+  btn.disabled = true;
+  _feedback('plex-feedback', 'Salvataggio...');
+  try {
+    await api.put('/api/integrations/plex', {
+      url: document.getElementById('plex-url').value.trim(),
+      token: document.getElementById('plex-token').value,
+      refresh_on_download: document.getElementById('plex-refresh-on-download').checked,
+    });
+    document.getElementById('plex-token').value = '';
+    _feedback('plex-feedback', 'Salvato.', 'success');
+    showToast('Impostazioni Plex salvate', 'success');
+    await loadPlexSettings();
+  } catch (e) { _feedback('plex-feedback', errText(e, 'Errore salvataggio.'), 'danger'); }
+  finally { btn.disabled = false; }
+}
+
+async function testPlex() {
+  _feedback('plex-feedback', 'Verifica in corso...');
+  try {
+    const data = await api.post('/api/integrations/plex/test');
+    _feedback('plex-feedback', data.detail || (data.ok ? 'Riuscita.' : 'Fallita.'),
+      data.ok ? 'success' : 'danger');
+  } catch (e) { _feedback('plex-feedback', 'Errore di rete.', 'danger'); }
+}
+
+async function _loadArrSettings(service) {
+  try {
+    const data = await api.get(`/api/integrations/${service}`);
+    document.getElementById(`${service}-url`).value = data.url || '';
+    document.getElementById(`${service}-refresh-on-download`).checked = !!data.refresh_on_download;
+    document.getElementById(`${service}-sync-wanted`).checked = !!data.sync_wanted;
+    document.getElementById(`${service}-import-dir`).value = data.import_dir || '';
+  } catch (e) { /* the form simply stays as it was */ }
+}
+
+async function _saveArrSettings(service) {
+  const btn = document.getElementById(`save-${service}-btn`);
+  btn.disabled = true;
+  _feedback(`${service}-feedback`, 'Salvataggio...');
+  try {
+    await api.put(`/api/integrations/${service}`, {
+      url: document.getElementById(`${service}-url`).value.trim(),
+      api_key: document.getElementById(`${service}-api-key`).value,
+      refresh_on_download: document.getElementById(`${service}-refresh-on-download`).checked,
+      sync_wanted: document.getElementById(`${service}-sync-wanted`).checked,
+      import_dir: document.getElementById(`${service}-import-dir`).value.trim(),
+    });
+    document.getElementById(`${service}-api-key`).value = '';
+    _feedback(`${service}-feedback`, 'Salvato.', 'success');
+    showToast(`Impostazioni ${service} salvate`, 'success');
+  } catch (e) { _feedback(`${service}-feedback`, errText(e, 'Errore salvataggio.'), 'danger'); }
+  finally { btn.disabled = false; }
+}
+
+async function _testArrConnection(service) {
+  _feedback(`${service}-feedback`, 'Verifica in corso...');
+  try {
+    const data = await api.post(`/api/integrations/${service}/test`);
+    _feedback(`${service}-feedback`, data.detail || (data.ok ? 'Riuscita.' : 'Fallita.'),
+      data.ok ? 'success' : 'danger');
+  } catch (e) { _feedback(`${service}-feedback`, 'Errore di rete.', 'danger'); }
+}
+
+const loadSonarrSettings = () => _loadArrSettings('sonarr');
+const saveSonarr = () => _saveArrSettings('sonarr');
+const testSonarr = () => _testArrConnection('sonarr');
+const loadRadarrSettings = () => _loadArrSettings('radarr');
+const saveRadarr = () => _saveArrSettings('radarr');
+const testRadarr = () => _testArrConnection('radarr');
+
+const ARR_SERVICE_LABELS = { sonarr: 'Sonarr', radarr: 'Radarr' };
+
+async function loadArrReview() {
+  try {
+    const data = await api.get('/api/integrations/sync-review');
+    renderArrReview(data.items || []);
+  } catch (e) { /* the list simply stays as it was */ }
+}
+
+function renderArrReview(items) {
+  const container = document.getElementById('arr-review-list');
+  if (!items.length) {
+    container.innerHTML = '<p class="text-muted small mb-0">Nessun titolo in attesa di verifica.</p>';
+    return;
+  }
+  container.innerHTML = items.map(item => `
+    <div class="d-flex align-items-center gap-2 border-bottom py-1">
+      <span class="badge bg-secondary-lt">${escapeHtml(ARR_SERVICE_LABELS[item.service] || item.service)}</span>
+      <span class="flex-fill text-truncate" style="color:var(--text)">${escapeHtml(item.title)}</span>
+      <span class="text-muted small">${item.status === 'not_found' ? 'id non trovato' : 'da verificare'}</span>
+    </div>`).join('');
+}
+
+// ── Plex / Sonarr / Radarr end ───────────────────────────────────────────────
+
 async function saveDomainRecovery() {
   const btn = document.getElementById('save-domain-recovery-btn');
   const interval = parseInt(document.getElementById('domain-check-interval').value, 10);
@@ -895,6 +1012,12 @@ registerActions({
   'cfg:hookEnabled':      (d, el) => toggleHook(Number(d.id), el.checked),
   'cfg:testHook':         d => testHook(Number(d.id)),
   'cfg:deleteHook':       d => deleteHook(Number(d.id)),
+  'cfg:savePlex':         () => savePlex(),
+  'cfg:testPlex':         () => testPlex(),
+  'cfg:saveSonarr':       () => saveSonarr(),
+  'cfg:testSonarr':       () => testSonarr(),
+  'cfg:saveRadarr':       () => saveRadarr(),
+  'cfg:testRadarr':       () => testRadarr(),
 });
 
 

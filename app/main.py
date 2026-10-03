@@ -23,9 +23,10 @@ from app.requests import router as requests_router, service as requests_service
 from app.watches import poller as watch_poller, router as watches_router
 from app.schedule import ScheduleStore
 from app.config import SCHEDULE_FILE
+from app.integrations import sync as arr_sync
 from app.routers import (
     domain, search, home, tv, downloads, progress, files, images, anime, notification_channels,
-    metadata as metadata_router, download_hooks,
+    metadata as metadata_router, download_hooks, integrations as integrations_router,
 )
 
 logging.basicConfig(
@@ -96,6 +97,9 @@ async def lifespan(app: FastAPI):
     # Third and last: outbound side effects only, so it can neither delay a
     # request's own row nor swallow a notification if it fails.
     downloads_hooks.register_hook_listener()
+    # Independent of the above: only fires for the jobs it submitted itself
+    # into a Sonarr/Radarr staging folder. See app.integrations.sync.
+    arr_sync.register_import_listener()
     # Before anything can approve or complete a request: any row still
     # "approved" or "downloading" from a previous run has no in-memory worker
     # left, and never will — it needs recovering before the app is reachable.
@@ -111,11 +115,15 @@ async def lifespan(app: FastAPI):
     # anything in it, and both sleep before their first pass so the lifespan
     # never does network I/O.
     domain_task = asyncio.create_task(domain_recovery.domain_watch_loop())
+    # Same shape as the watch poller, for Sonarr/Radarr's own "wanted" lists
+    # instead of a followed series.
+    arr_sync_task = asyncio.create_task(arr_sync.arr_sync_loop())
     try:
         yield
     finally:
         poller_task.cancel()
         domain_task.cancel()
+        arr_sync_task.cancel()
 
 
 app = FastAPI(title="StreamingCommunity Web Panel", version=__version__, lifespan=lifespan)
@@ -136,6 +144,7 @@ app.include_router(domain.router)
 app.include_router(metadata_router.router)
 app.include_router(notification_channels.router)
 app.include_router(download_hooks.router)
+app.include_router(integrations_router.router)
 app.include_router(watches_router.router)
 app.include_router(search.router)
 app.include_router(home.router)

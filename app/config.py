@@ -94,6 +94,22 @@ SETTINGS_DEFAULTS = {
     # Ask Jellyfin to scan when a download lands, instead of waiting for its
     # own schedule. Inert unless Jellyfin is connected.
     "jellyfin_refresh_on_download": False,
+    # Same idea as above, for Plex and for Sonarr/Radarr's own rescan command.
+    # Inert unless the respective connector is configured. See app.integrations.
+    "plex_refresh_on_download": False,
+    "sonarr_refresh_on_download": False,
+    "radarr_refresh_on_download": False,
+    # Whether the panel periodically asks Sonarr/Radarr what they are missing
+    # and tries to download it itself. Off by default: enabling it is a
+    # decision about letting another application's "wanted" list drive
+    # downloads here.
+    "sonarr_sync_wanted": False,
+    "radarr_sync_wanted": False,
+    "arr_sync_interval_minutes": 240,
+    # Who owns the requests a Sonarr/Radarr sync creates, when accounts are
+    # enabled. Open mode ignores this and downloads directly, the same way it
+    # does everywhere else — see app.integrations.sync.
+    "arr_managed_by_user_id": None,
     # The container every download is written into, and whether subtitles are
     # muxed in or left beside the video as .vtt. The vocabulary and the
     # fallbacks live in app.core.container, which is the only thing that reads

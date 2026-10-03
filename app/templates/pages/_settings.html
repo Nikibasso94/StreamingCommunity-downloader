@@ -42,6 +42,9 @@
         <li class="nav-item">
           <a class="nav-link" href="#" data-settings-tab="hook">Hook</a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link" href="#" data-settings-tab="integrazioni">Integrazioni</a>
+        </li>
       </ul>
 
       <div class="settings-pane" data-settings-pane="sorgente">
@@ -511,6 +514,130 @@
         <div class="settings-actions">
           <div id="hooks-feedback" class="form-text"></div>
         </div>
+      </div>
+      </div>
+
+      <div class="settings-pane" data-settings-pane="integrazioni" style="display:none">
+      <!-- ── Plex ──────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <p class="settings-section-label">Plex</p>
+        <p class="settings-section-hint">
+          A fine download il pannello pu&ograve; chiedere a Plex di aggiornare le librerie,
+          invece di aspettare la sua scansione periodica.
+        </p>
+        <label class="form-label" for="plex-url">URL del server</label>
+        <input type="text" id="plex-url" class="form-control mb-2" placeholder="http://plex.local:32400">
+        <label class="form-label" for="plex-token">Token</label>
+        <input type="password" id="plex-token" class="form-control"
+               placeholder="Lascia vuoto per non modificarlo">
+        <div class="form-text" id="plex-token-current"></div>
+        <label class="form-check form-switch mt-2">
+          <input class="form-check-input" type="checkbox" id="plex-refresh-on-download">
+          <span class="form-check-label">Aggiorna le librerie a fine download</span>
+        </label>
+        <div class="settings-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-action="cfg:savePlex" id="save-plex-btn">
+            Salva
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-action="cfg:testPlex" id="test-plex-btn">
+            Verifica connessione
+          </button>
+          <div id="plex-feedback" class="form-text"></div>
+        </div>
+      </div>
+
+      <!-- ── Sonarr ────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <p class="settings-section-label">Sonarr</p>
+        <p class="settings-section-hint">
+          Il pannello pu&ograve; chiedere a Sonarr di segnalare i nuovi file a fine download, e
+          periodicamente provare a scaricare da s&eacute; ci&ograve; che Sonarr segna come mancante.
+        </p>
+        <p class="settings-section-hint settings-warn">
+          <i class="ti ti-alert-triangle me-1"></i>
+          La sorgente non espone un identificativo TVDB: la corrispondenza con Sonarr &egrave;
+          per titolo e anno. Quando non &egrave; abbastanza sicura, il titolo finisce nella lista
+          &laquo;da verificare&raquo; qui sotto invece di essere scaricato a indovinare.
+        </p>
+        <label class="form-label" for="sonarr-url">URL</label>
+        <input type="text" id="sonarr-url" class="form-control mb-2" placeholder="http://sonarr.local:8989">
+        <label class="form-label" for="sonarr-api-key">API key</label>
+        <input type="password" id="sonarr-api-key" class="form-control"
+               placeholder="Lascia vuoto per non modificarla">
+        <label class="form-check form-switch mt-2">
+          <input class="form-check-input" type="checkbox" id="sonarr-refresh-on-download">
+          <span class="form-check-label">Chiedi un rescan a fine download</span>
+        </label>
+        <label class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="sonarr-sync-wanted">
+          <span class="form-check-label">Scarica automaticamente ci&ograve; che Sonarr segna come mancante</span>
+        </label>
+        <label class="form-label mt-2" for="sonarr-import-dir">Cartella di importazione (opzionale)</label>
+        <input type="text" id="sonarr-import-dir" class="form-control" placeholder="/dati/import/sonarr">
+        <p class="settings-section-hint">
+          Una cartella che anche Sonarr vede (stesso volume). Se impostata, l&rsquo;episodio viene
+          scaricato l&igrave; e poi &egrave; Sonarr stesso a spostarlo e rinominarlo nella sua libreria.
+          Vuota: il file resta nella libreria configurata qui, e a Sonarr si chiede solo un rescan.
+          Disponibile solo in modalit&agrave; senza account.
+        </p>
+        <div class="settings-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-action="cfg:saveSonarr" id="save-sonarr-btn">
+            Salva
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-action="cfg:testSonarr" id="test-sonarr-btn">
+            Verifica connessione
+          </button>
+          <div id="sonarr-feedback" class="form-text"></div>
+        </div>
+      </div>
+
+      <!-- ── Radarr ────────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <p class="settings-section-label">Radarr</p>
+        <p class="settings-section-hint">
+          Come sopra, per i film. Un film con un identificativo TMDB da parte di Radarr viene
+          scaricato solo con una corrispondenza esatta su quell&rsquo;id, mai per titolo somigliante.
+        </p>
+        <label class="form-label" for="radarr-url">URL</label>
+        <input type="text" id="radarr-url" class="form-control mb-2" placeholder="http://radarr.local:7878">
+        <label class="form-label" for="radarr-api-key">API key</label>
+        <input type="password" id="radarr-api-key" class="form-control"
+               placeholder="Lascia vuoto per non modificarla">
+        <label class="form-check form-switch mt-2">
+          <input class="form-check-input" type="checkbox" id="radarr-refresh-on-download">
+          <span class="form-check-label">Chiedi un rescan a fine download</span>
+        </label>
+        <label class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="radarr-sync-wanted">
+          <span class="form-check-label">Scarica automaticamente ci&ograve; che Radarr segna come mancante</span>
+        </label>
+        <label class="form-label mt-2" for="radarr-import-dir">Cartella di importazione (opzionale)</label>
+        <input type="text" id="radarr-import-dir" class="form-control" placeholder="/dati/import/radarr">
+        <p class="settings-section-hint">
+          Una cartella che anche Radarr vede (stesso volume). Se impostata, il film viene
+          scaricato l&igrave; e poi &egrave; Radarr stesso a spostarlo e rinominarlo nella sua libreria.
+          Vuota: il file resta nella libreria configurata qui, e a Radarr si chiede solo un rescan.
+          Disponibile solo in modalit&agrave; senza account.
+        </p>
+        <div class="settings-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-action="cfg:saveRadarr" id="save-radarr-btn">
+            Salva
+          </button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-action="cfg:testRadarr" id="test-radarr-btn">
+            Verifica connessione
+          </button>
+          <div id="radarr-feedback" class="form-text"></div>
+        </div>
+      </div>
+
+      <!-- ── Da verificare ─────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <p class="settings-section-label">Da verificare</p>
+        <p class="settings-section-hint">
+          Titoli che Sonarr o Radarr segnano come mancanti e che il pannello non &egrave; riuscito
+          a piazzare da s&eacute; con sufficiente sicurezza. Vanno cercati e richiesti a mano.
+        </p>
+        <div id="arr-review-list"></div>
       </div>
       </div>
   </div>

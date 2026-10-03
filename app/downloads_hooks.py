@@ -240,6 +240,9 @@ def on_job_finished(job) -> None:
 
     if status == "done":
         _maybe_refresh_jellyfin()
+        _maybe_refresh_plex()
+        _maybe_refresh_sonarr()
+        _maybe_refresh_radarr()
 
     tokens = job_tokens(job)
     for hook in list_enabled_for_event(status):
@@ -258,6 +261,33 @@ def _maybe_refresh_jellyfin() -> None:
     if not get_settings().get("jellyfin_refresh_on_download"):
         return
     refresh_jellyfin_library()
+
+
+def _maybe_refresh_plex() -> None:
+    from app.config import get_settings
+    from app.integrations import plex
+
+    if not get_settings().get("plex_refresh_on_download"):
+        return
+    plex.refresh_libraries()
+
+
+def _maybe_refresh_sonarr() -> None:
+    from app.config import get_settings
+    from app.integrations import sonarr
+
+    if not get_settings().get("sonarr_refresh_on_download"):
+        return
+    sonarr.rescan_series()
+
+
+def _maybe_refresh_radarr() -> None:
+    from app.config import get_settings
+    from app.integrations import radarr
+
+    if not get_settings().get("radarr_refresh_on_download"):
+        return
+    radarr.rescan_movie()
 
 
 def register_hook_listener():

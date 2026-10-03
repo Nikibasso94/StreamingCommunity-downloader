@@ -468,6 +468,29 @@ _V9_FOLLOWER_LANGUAGES = [
     "ALTER TABLE jf_series_watch_subscriber ADD COLUMN subtitle_languages TEXT",
 ]
 
+# What the Sonarr/Radarr sync has already done with one of their "wanted"
+# items, keyed on the id *they* gave it — not on anything resolved on the
+# source, since a resolution can fail and needs remembering too. Without this
+# every poll cycle would re-run the search for every item it could not place
+# last time, and could resubmit a download that is already in flight. See
+# app.integrations.sync.
+_V10_ARR_SYNC = [
+    """
+    CREATE TABLE jf_arr_sync_seen (
+        service         TEXT NOT NULL,  -- 'sonarr' | 'radarr'
+        external_key    TEXT NOT NULL,  -- Sonarr/Radarr's own id for the item
+        status          TEXT NOT NULL,  -- downloading | auto_approved | queued |
+                                         -- already_in_library | needs_review |
+                                         -- not_found | submit_failed
+        request_id      INTEGER,
+        title           TEXT NOT NULL,
+        last_checked_at TEXT NOT NULL,
+        PRIMARY KEY (service, external_key)
+    )
+    """,
+    "CREATE INDEX jf_arr_sync_seen_status ON jf_arr_sync_seen(status)",
+]
+
 
 Migration = list[str] | Callable[[sqlite3.Connection, bool], None]
 
@@ -481,6 +504,7 @@ MIGRATIONS: list[Migration] = [
     _V7_DOWNLOAD_HOOK,
     _v8_carry_over_open_mode,
     _V9_FOLLOWER_LANGUAGES,
+    _V10_ARR_SYNC,
 ]
 
 

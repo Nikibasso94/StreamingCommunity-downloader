@@ -534,7 +534,8 @@ class JobManager:
                     subtitle_languages: list[str] = None,
                     strict_audio: bool = False,
                     user_id: int = None,
-                    tmdb_id: int = None) -> str:
+                    tmdb_id: int = None,
+                    output_dir: str = None) -> str:
         from app.core.film import download_film
 
         job = self._make_job(title, "film", schedule_id=schedule_id,
@@ -543,7 +544,10 @@ class JobManager:
         return self._submit_job(
             job, download_film,
             id_film, title, domain,
-            output_dir=_get_library_path("film"),
+            # A caller handing the file to something else's own import step —
+            # see app.integrations.sync — passes its staging folder here
+            # instead of the configured library.
+            output_dir=output_dir or _get_library_path("film"),
             temp_dir=str(TMP_DIR / job.job_id),
             progress_factory=self._make_progress_factory(job),
             year=year,
@@ -562,7 +566,8 @@ class JobManager:
                        strict_audio: bool = False,
                        user_id: int = None, batch_id: str = None,
                        batch_kind: str = None, batch_label: str = None,
-                       tmdb_id: int = None) -> str:
+                       tmdb_id: int = None,
+                       output_dir: str = None) -> str:
         from app.core.tv import download_episode, fmt_ep
 
         ep = eps[ep_index]
@@ -575,7 +580,9 @@ class JobManager:
         return self._submit_job(
             job, download_episode,
             tv_id, eps, ep_index, domain, token, tv_name, season,
-            output_dir=_get_library_path("tv"),
+            # See app.integrations.sync: a staging folder Sonarr imports from,
+            # when one is configured, instead of the panel's own library.
+            output_dir=output_dir or _get_library_path("tv"),
             temp_dir=str(TMP_DIR / job.job_id),
             progress_factory=self._make_progress_factory(job),
             cancel_event=job.cancel_event,
