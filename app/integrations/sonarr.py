@@ -72,6 +72,50 @@ def get_episode(episode_id) -> dict | None:
         return None
 
 
+def find_missing_episode(series_title: str, season: int, episode_number) -> dict | None:
+    """The local Sonarr episode for this series/season/episode, if it is
+    monitored and still has no file. ``None`` otherwise — including when
+    Sonarr is unreachable, when no series matches closely enough, or when it
+    does have the episode but already has a file for it.
+
+    Checked after *any* finished episode, not only ones the sync submitted,
+    so a manually downloaded episode that happens to be on Sonarr's own
+    missing list gets the same move-and-rename handoff a synced one would —
+    see ``app.downloads_hooks._maybe_refresh_sonarr``. The source gives no
+    id to confirm a series by, so the series itself is matched by title the
+    same conservative way ``app.integrations.matching`` does for the sync.
+    """
+    url, api_key = get_config()
+    if not url or not api_key:
+        return None
+    try:
+        all_series = arr_client.get(url, api_key, "series")
+    except Exception as exc:
+        logger.warning("Sonarr series lookup failed: %s", type(exc).__name__)
+        return None
+
+    from app.integrations.matching import SERIES_MATCH_THRESHOLD, _title_score
+
+    best, best_score = None, 0.0
+    for series in all_series or []:
+        score = _title_score(series_title, series.get("title") or "")
+        if score > best_score:
+            best, best_score = series, score
+    if best is None or best_score < SERIES_MATCH_THRESHOLD:
+        return None
+
+    try:
+        episodes = arr_client.get(url, api_key, "episode", params={"seriesId": best["id"]})
+    except Exception as exc:
+        logger.warning("Sonarr episode lookup failed: %s", type(exc).__name__)
+        return None
+    for episode in episodes or []:
+        if episode.get("seasonNumber") == season and str(episode.get("episodeNumber")) == str(episode_number) \
+                and episode.get("monitored") and not episode.get("hasFile"):
+            return episode
+    return None
+
+
 def wanted_missing() -> list[dict]:
     """Monitored episodes Sonarr has not downloaded yet, series included.
 

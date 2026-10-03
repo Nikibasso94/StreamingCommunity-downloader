@@ -69,6 +69,13 @@ class DownloadJob:
     season: Optional[int] = None
     episode_number: Optional[str] = None
 
+    # The source's own tmdb id, when there is one (never for anime — see
+    # submit_anime_episode). Carried on the job, not only passed to the
+    # download call, so a finished-job listener can match it against
+    # Radarr's library without a second lookup; see
+    # app.downloads_hooks._maybe_refresh_radarr.
+    tmdb_id: Optional[int] = None
+
     # What was handed to the executor, minus the arguments bound to this job
     # object (_JOB_BOUND_KWARGS). Kept so a failed job can be run again without
     # the client re-sending anything — the domain and the requester's identity
@@ -540,7 +547,7 @@ class JobManager:
 
         job = self._make_job(title, "film", schedule_id=schedule_id,
                              phases=self._compute_phases(audio_languages or ["ita"]),
-                             user_id=user_id, media_label=title, year=year)
+                             user_id=user_id, media_label=title, year=year, tmdb_id=tmdb_id)
         return self._submit_job(
             job, download_film,
             id_film, title, domain,
@@ -576,7 +583,7 @@ class JobManager:
                              phases=self._compute_phases(audio_languages or ["ita"]),
                              user_id=user_id, batch_id=batch_id, batch_kind=batch_kind,
                              batch_label=batch_label, media_label=tv_name, year=year,
-                             season=season, episode_number=str(ep["n"]))
+                             season=season, episode_number=str(ep["n"]), tmdb_id=tmdb_id)
         return self._submit_job(
             job, download_episode,
             tv_id, eps, ep_index, domain, token, tv_name, season,

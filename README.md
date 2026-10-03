@@ -512,9 +512,10 @@ feature.
   object carrying all of them is sent.
 
 **Impostazioni → Integrazioni** adds the same one-switch refresh for **Plex** (URL + token) and for
-**Sonarr/Radarr** (URL + API key) — the panel asks the other application to rescan, the same way
-the Jellyfin switch does. It only confirms a file already in the right place; it moves nothing. See
-"Sonarr and Radarr" below for what else that tab does.
+**Sonarr/Radarr** (URL + API key). For Plex it is a plain rescan, like the Jellyfin switch: it only
+confirms a file already in the right place, never moving anything. For Sonarr/Radarr it tries
+harder first — see "Sonarr and Radarr" below for what else that tab does, and for what this does
+when the download was not started by the sync at all.
 
 There is no "run a command" hook, deliberately: on a panel running without login, settings are open
 to every visitor, and a command would hand them a shell. A webhook can point at your own network —
@@ -543,6 +544,14 @@ mistake a retry fixes:
   match is title-and-year similarity above a high bar.
 - Anything that does not clear that bar lands in the **"Da verificare"** list on the same tab
   instead of being guessed at. Search and request it by hand from there.
+
+**A manual download gets the same treatment, not only a synced one.** After *any* finished film or
+episode — a manual search, a followed series, the sync, it makes no difference — the post-download
+refresh checks whether it is something Radarr/Sonarr themselves are missing: a film by the exact
+tmdb_id match described above, an episode by the same title-and-year-bar series match plus its
+season/episode number. A hit is handed to Sonarr's/Radarr's own import from wherever the file
+actually landed — no import folder required, since it is scanning the real destination, not a
+staging one. No hit just falls back to the plain rescan described above.
 
 **Letting Sonarr/Radarr move the file themselves.** In **modalità aperta** (no Jellyfin login,
 Settings → Access → "Continua senza Jellyfin"), each connector also takes an optional **import

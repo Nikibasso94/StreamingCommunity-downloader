@@ -70,6 +70,32 @@ def get_movie(movie_id) -> dict | None:
         return None
 
 
+def find_missing_movie(tmdb_id: int) -> dict | None:
+    """The local Radarr movie for this tmdb_id, if it is monitored and still
+    has no file. ``None`` otherwise — including when Radarr is unreachable,
+    or when it does have the movie but already has a file for it.
+
+    Checked after *any* finished film, not only ones the sync submitted, so
+    a manually downloaded film that happens to be on Radarr's own missing
+    list gets the same move-and-rename handoff a synced one would — see
+    ``app.downloads_hooks._maybe_refresh_radarr``. Matched on tmdb_id, the
+    same id ``app.integrations.matching`` confirms a sync match against, so
+    this is exact or nothing, never a title that merely sounds right.
+    """
+    url, api_key = get_config()
+    if not url or not api_key:
+        return None
+    try:
+        movies = arr_client.get(url, api_key, "movie", params={"tmdbId": tmdb_id})
+    except Exception as exc:
+        logger.warning("Radarr movie lookup by tmdb_id failed: %s", type(exc).__name__)
+        return None
+    for movie in movies or []:
+        if movie.get("tmdbId") == tmdb_id and movie.get("monitored") and not movie.get("hasFile"):
+            return movie
+    return None
+
+
 def wanted_missing() -> list[dict]:
     """Monitored movies Radarr has not downloaded yet.
 
