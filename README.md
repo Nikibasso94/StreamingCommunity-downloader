@@ -118,6 +118,8 @@
 - Real-time download progress with per-phase steps (video → audio → merge)
 - Integrated file manager with drag-and-drop, video streaming and free space on the media volume
 - Jellyfin library path configuration, and an optional **library refresh when a download lands**
+- **Plex, Sonarr and Radarr connectors**: the same library refresh, plus an optional sync of
+  Sonarr/Radarr's own "wanted" lists into downloads here
 - **Post-download webhooks** with a body template
 - **Configurable file and folder names**
 - Scheduled downloads
@@ -151,6 +153,65 @@ The image is published to GitHub Container Registry on every push to `main`:
 ```
 ghcr.io/edoardofiore/streamingcommunity-downloader:latest
 ```
+
+### Portainer
+
+The same image works as a Portainer stack: **Stacks → Add stack → Web editor**, paste the compose
+below, edit the two `device:` paths to real, already-existing directories on the host, then
+**Deploy**.
+
+```yaml
+services:
+  web:
+    image: ghcr.io/edoardofiore/streamingcommunity-downloader:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - nfs_storage:/app/videos
+      - panel_config:/app/config
+    environment:
+      - VIDEOS_DIR=/app/videos
+      - DB_FILE=/app/config/panel.db
+      - DATA_FILE=/app/config/data.json
+      - SCHEDULE_FILE=/app/config/schedule.json
+      - HOST=0.0.0.0
+      - PORT=8000
+      - COOKIE_SECURE=0
+      - COOKIE_SAMESITE=lax
+      - TRUST_PROXY_HEADERS=0
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    restart: unless-stopped
+    deploy:
+      replicas: 1   # see "Run one process" below — has no effect outside Swarm
+
+volumes:
+  nfs_storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/nfs/storage   # ← real path for videos
+  panel_config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/scpanel/config   # ← real path for panel.db/data.json; create it first
+```
+
+Running your own fork instead? Point `image:` at your own package — `.github/workflows/docker-publish.yml`
+builds and publishes it the same way, under `ghcr.io/<your-username>/streamingcommunity-downloader`,
+on every push to `main`. Two things only matter on a fork:
+
+- **GitHub disables Actions on forks by default.** If pushing never produces a run under the
+  **Actions** tab, open it once and accept "I understand my workflows, go ahead and enable them" —
+  a one-time switch, not needed again after that.
+- **GHCR packages are created private.** Portainer cannot pull a private image with no credentials
+  configured, so make the package public from `github.com/<your-username>?tab=packages` →
+  the package → **Package settings** → **Change visibility** → **Public** — or add registry
+  credentials in Portainer instead.
 
 ### Trying a branch before it is released
 
@@ -435,10 +496,59 @@ feature.
   `{type}`, `{season}`, `{episode}`, `{year}` and `{error}` are substituted. With no body a JSON
   object carrying all of them is sent.
 
+**Impostazioni → Integrazioni** adds the same one-switch refresh for **Plex** (URL + token) and for
+**Sonarr/Radarr** (URL + API key) — the panel asks the other application to rescan, the same way
+the Jellyfin switch does. It only confirms a file already in the right place; it moves nothing. See
+"Sonarr and Radarr" below for what else that tab does.
+
 There is no "run a command" hook, deliberately: on a panel running without login, settings are open
 to every visitor, and a command would hand them a shell. A webhook can point at your own network —
 that is how it reaches Jellyfin — so the panel reports only whether the call succeeded, never what
 came back.
+
+---
+
+## Sonarr and Radarr
+
+**Impostazioni → Integrazioni** connects the panel to Sonarr and/or Radarr with just a URL and an
+API key — no need for both. Besides the post-download rescan described above, each gets its own
+switch for syncing what it is missing.
+
+**Syncing the "wanted" list.** With this on, the panel periodically reads Sonarr's or Radarr's own
+list of monitored, missing episodes and movies, and tries to download each one here — the same
+pipeline a followed series uses, not a separate code path.
+
+Matching is deliberately conservative, because downloading the wrong film or episode is not a
+mistake a retry fixes:
+
+- A **Radarr** movie usually carries a TMDB id. The panel downloads only on an **exact match**
+  against the id it already reads from the source's own title page — never a title that merely
+  sounds right, even when nothing matches the id.
+- A **Sonarr** episode has no such id to confirm against — the source exposes no TVDB id — so the
+  match is title-and-year similarity above a high bar.
+- Anything that does not clear that bar lands in the **"Da verificare"** list on the same tab
+  instead of being guessed at. Search and request it by hand from there.
+
+**Letting Sonarr/Radarr move the file themselves.** In **modalità aperta** (no Jellyfin login,
+Settings → Access → "Continua senza Jellyfin"), each connector also takes an optional **import
+folder** — a path mounted into both this panel's container and Sonarr's/Radarr's, e.g. the same
+Docker volume under two different mount points. Set it and a synced download lands there instead of
+in this panel's own library; once the job finishes, the panel calls Sonarr's/Radarr's own
+`DownloadedEpisodesScan`/`DownloadedMoviesScan`, and *they* parse the filename, rename it and move it
+into their library, the same as any other completed download they import. Leave it blank to keep the
+simpler behaviour above: the file stays in this panel's library, and Sonarr/Radarr only get asked to
+rescan.
+
+Two things worth knowing before turning the import folder on:
+
+- Matching relies on Sonarr/Radarr being able to **parse the downloaded filename** — season and
+  episode, or title and year. Check **Impostazioni → Nomi** produces something they recognise before
+  relying on it unattended.
+- The import handoff is **open-mode only** for now. With a Jellyfin login configured, a synced match
+  still goes through the normal request queue and lands in this panel's library with a plain rescan
+  afterwards — not through Sonarr/Radarr's import. The queue path also needs an owning user
+  (`arr_managed_by_user_id` in `data.json`) for every synced request; there is no UI for it yet, so
+  without one the sync leaves every match in the review list rather than guessing who it belongs to.
 
 ---
 
