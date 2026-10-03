@@ -45,7 +45,25 @@ DEFAULT_SUBTITLES = ["ita", "eng"]
 
 # Outcomes that must not be re-attempted every cycle: the sync already placed
 # a download, or the title is already in the library.
-SETTLED_STATUSES = ("downloading", "auto_approved", "queued", "already_in_library", "dismissed")
+SETTLED_STATUSES = (
+    "downloading", "auto_approved", "queued", "already_in_library", "dismissed",
+    "numbering_mismatch",
+)
+
+
+class EpisodeNotFoundError(RuntimeError):
+    """The series matched, but the source has no episode numbered the way
+    Sonarr numbers it.
+
+    Long-running shows with hundreds of short episodes (soaps, daily
+    sitcoms) are often split into seasons differently by Sonarr's catalogue
+    and by this source — "season 1" can mean completely different spans of
+    episodes on each side. There is no mapping between the two to resolve
+    this automatically, so the automatic cycle skips the episode rather than
+    erroring every run; see its one caller in ``process_sonarr_item``. A
+    human resolving the same episode by hand still sees this raised, because
+    there the message is useful rather than noise.
+    """
 
 
 def _interval_seconds() -> int:
@@ -142,7 +160,7 @@ def _submit_direct_episode(domain: str, candidate: dict, season, episode_number,
             if import_dir:
                 _track_pending_import(job_id, "sonarr")
             return job_id
-    raise RuntimeError(f"episodio S{season}E{episode_number} non trovato per «{title}»")
+    raise EpisodeNotFoundError(f"episodio S{season}E{episode_number} non trovato per «{title}»")
 
 
 def _submit_direct_film(domain: str, candidate: dict, title: str, year: str | None) -> str:
@@ -235,6 +253,14 @@ def process_sonarr_item(domain: str, record: dict) -> str:
 
     try:
         outcome = _place(resolver.EPISODE, domain, candidate, season, str(episode_number), title, year)
+    except EpisodeNotFoundError:
+        # The series matched; the source just does not have this exact
+        # season/episode under that numbering. Skipped quietly rather than
+        # retried every cycle or parked for review — there is nothing a human
+        # resolving it differently would change, since the series is already
+        # right. See EpisodeNotFoundError.
+        logger.info("Sonarr sync: no S%sE%s for «%s» on the source", season, episode_number, title)
+        outcome = "numbering_mismatch"
     except Exception:
         logger.exception("Sonarr sync failed to submit %s S%sE%s", title, season, episode_number)
         outcome = "submit_failed"

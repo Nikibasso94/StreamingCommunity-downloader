@@ -99,6 +99,39 @@ def test_sonarr_item_with_a_match_downloads_directly_in_open_mode(
     assert sync.get_seen("sonarr", "501")["status"] == "downloading"
 
 
+def test_a_numbering_mismatch_is_skipped_quietly_not_reviewed_or_retried(
+    client, open_panel, monkeypatch,
+):
+    """The series matches; the source just has no such season/episode under
+    that numbering (common for long-running shows Sonarr and the source split
+    into seasons differently). The automatic cycle must not park this for
+    review or keep retrying it — there is nothing a human would change."""
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
+    # open_panel's fake source has episodes 1-3; SONARR_EPISODE asks for "4".
+
+    outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert outcome == "numbering_mismatch"
+    assert sync.get_seen("sonarr", "501")["status"] == "numbering_mismatch"
+    assert sync.review_items("sonarr") == []
+
+    match_calls = []
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1))
+    again = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert again == "numbering_mismatch"
+    assert match_calls == []  # settled: not retried
+
+
+def test_resolving_the_same_mismatch_by_hand_still_raises(client, open_panel, monkeypatch):
+    """Automatic skips it quietly; a human acting on it deliberately still
+    gets the real error, because there the message is useful, not noise."""
+    monkeypatch.setattr(sonarr, "get_episode", lambda eid: SONARR_EPISODE if eid == "501" else None)
+
+    with pytest.raises(sync.EpisodeNotFoundError):
+        sync.resolve_review_item("sonarr", "501", _series_candidate())
+
+
 def test_a_settled_sonarr_item_is_not_reprocessed(client, open_panel, monkeypatch):
     sync.record_seen("sonarr", "501", "downloading", "Una Serie")
     match_calls = []
