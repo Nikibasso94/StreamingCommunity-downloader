@@ -103,6 +103,7 @@ def place_in_library(output_path: str, target_dir: str) -> str | None:
     never raised, since the caller falls back to a blind rescan either way.
     """
     stem = os.path.splitext(output_path)[0]
+    source_dir = os.path.dirname(output_path)
     try:
         os.makedirs(target_dir, exist_ok=True)
         new_path = None
@@ -111,7 +112,18 @@ def place_in_library(output_path: str, target_dir: str) -> str | None:
             shutil.move(sibling, destination)
             if os.path.abspath(sibling) == os.path.abspath(output_path):
                 new_path = destination
-        return new_path
     except Exception:
         logger.exception("Could not move %s into %s", output_path, target_dir)
         return None
+
+    # The panel's own per-title folder (e.g. "Title (Year)/") is left behind
+    # empty rather than deleted outright — one level only, and only if moving
+    # the file really did empty it, so a poster or .nfo some other tool left
+    # there is never silently discarded.
+    try:
+        if source_dir and not os.listdir(source_dir):
+            os.rmdir(source_dir)
+    except OSError:
+        pass
+
+    return new_path

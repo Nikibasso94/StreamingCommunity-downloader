@@ -131,6 +131,37 @@ def test_place_in_library_moves_the_file_and_its_sidecars(tmp_path):
     assert (target_dir / "Film.it.vtt").read_text() == "subs"
     assert not video.exists()
     assert unrelated.exists()  # a different stem, left alone
+    assert source_dir.exists()  # not empty (unrelated is still there), so not removed
+
+
+def test_place_in_library_removes_the_source_folder_once_it_is_empty(tmp_path):
+    from app.integrations import arr_client
+
+    source_dir = tmp_path / "downloads" / "Film (2020)"
+    source_dir.mkdir(parents=True)
+    video = source_dir / "Film.mkv"
+    video.write_text("video")
+
+    arr_client.place_in_library(str(video), str(tmp_path / "library" / "Film (2020)"))
+
+    assert not source_dir.exists()
+
+
+def test_place_in_library_leaves_a_non_empty_source_folder_alone(tmp_path):
+    """A poster, an .nfo, anything some other tool left there must not be
+    silently discarded just because the video moved out."""
+    from app.integrations import arr_client
+
+    source_dir = tmp_path / "downloads" / "Film (2020)"
+    source_dir.mkdir(parents=True)
+    video = source_dir / "Film.mkv"
+    video.write_text("video")
+    (source_dir / "poster.jpg").write_text("poster")
+
+    arr_client.place_in_library(str(video), str(tmp_path / "library" / "Film (2020)"))
+
+    assert source_dir.exists()
+    assert (source_dir / "poster.jpg").exists()
 
 
 def test_place_in_library_returns_none_on_failure(tmp_path, monkeypatch):
