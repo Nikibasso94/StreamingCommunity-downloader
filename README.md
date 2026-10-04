@@ -605,6 +605,14 @@ off, the command still reorganises the folder and just leaves the filename alone
 the toggle being off means. Nothing about this is configured on the panel's side: whatever naming
 scheme Radarr/Sonarr already use for everything else is what a panel-delivered file gets too.
 
+A series in Sonarr with its own **Season Folder** setting switched off is the one exception: that
+flag lives on the series itself, not in the global naming settings, and with it off `RenameSeries`
+leaves every episode flat in the series' root folder on purpose — exactly as it would for anything
+else imported into that series, panel included. The rescan command is also waited for before the
+rename one fires, not just fired and assumed done: Radarr/Sonarr answer the rescan as soon as it is
+*queued*, well before it has actually run, and a rename command that raced ahead of it found nothing
+yet to reorganise — verified against a real Sonarr.
+
 Owning a request queued with accounts enabled is still a gap worth knowing: a sync match placed
 through the normal request queue needs an owning user (`arr_managed_by_user_id` in `data.json`) —
 there is no UI for it yet, so without one the sync leaves every match in the review list rather than
