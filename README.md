@@ -517,6 +517,11 @@ confirms a file already in the right place, never moving anything. For Sonarr/Ra
 harder first — see "Sonarr and Radarr" below for what else that tab does, and for what this does
 when the download was not started by the sync at all.
 
+With more than one of these switched on for the same download, Sonarr/Radarr always run before
+Jellyfin/Plex: Sonarr/Radarr can still move the file into their own library folder at this point,
+and a Jellyfin/Plex scan that ran first would look before that move happens, then never look there
+again once it does.
+
 There is no "run a command" hook, deliberately: on a panel running without login, settings are open
 to every visitor, and a command would hand them a shell. A webhook can point at your own network —
 that is how it reaches Jellyfin — so the panel reports only whether the call succeeded, never what
