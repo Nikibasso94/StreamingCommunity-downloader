@@ -97,10 +97,17 @@ async def lifespan(app: FastAPI):
     # Third and last: outbound side effects only, so it can neither delay a
     # request's own row nor swallow a notification if it fails.
     downloads_hooks.register_hook_listener()
+    # Independent of the above: only corrects the arr-sync ledger for jobs it
+    # submitted itself, so a download that fails after being submitted gets
+    # retried next cycle instead of staying marked "downloading" forever.
+    arr_sync.register_result_listener()
     # Before anything can approve or complete a request: any row still
     # "approved" or "downloading" from a previous run has no in-memory worker
     # left, and never will — it needs recovering before the app is reachable.
     requests_service.reconcile_orphaned_requests()
+    # Same idea for the arr-sync ledger: a "downloading" row with no job left
+    # to finish it would otherwise stay settled, and invisible, forever.
+    arr_sync.reconcile_orphaned_downloads()
     store = ScheduleStore(SCHEDULE_FILE)
     job_manager.set_schedule_store(store)
     job_manager.load_scheduled_from_store()

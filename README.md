@@ -545,6 +545,11 @@ mistake a retry fixes:
 - Anything that does not clear that bar lands in the **"Da verificare"** list on the same tab
   instead of being guessed at. Search and request it by hand from there.
 
+In **modalità aperta**, a download the sync placed is retried on the next cycle if it actually
+fails after being submitted — a dead link, a stalled segment, the container restarting mid-download
+— instead of sitting marked as in progress forever with nothing left running it. The same recovery
+runs once at startup, for anything a previous run left mid-download when it stopped.
+
 **A manual download gets the same treatment, not only a synced one.** After *any* finished film or
 episode — a manual search, a followed series, the sync, it makes no difference — the post-download
 refresh checks whether it is something Radarr/Sonarr themselves are missing: a film by the exact

@@ -7,11 +7,23 @@ source and a throwaway library, the same fixture app.watches' own poller
 tests use for exactly this reason.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.integrations import matching, radarr, sonarr, sync
 from app.requests import models as request_models
 from tests.conftest import enable_open_mode, make_user
+
+
+@pytest.fixture(autouse=True)
+def _clear_pending_results():
+    """Module-level tracking dict; a leaked entry would cross test boundaries
+    since job ids from ``stub_jobs`` restart at "job-1" every test."""
+    sync._pending_results.clear()
+    yield
+    sync._pending_results.clear()
+
 
 SONARR_EPISODE = {
     "id": 501, "seriesId": 10, "seasonNumber": 1, "episodeNumber": 4,
@@ -299,3 +311,89 @@ def test_a_dismissed_item_is_not_reprocessed_by_the_next_cycle(client, open_pane
 
     assert outcome == "dismissed"
     assert match_calls == []
+
+
+# ── Correcting "downloading" once the job actually finishes ────────────────
+
+def test_a_successful_direct_download_becomes_settled_as_downloaded(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
+
+    outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+    assert outcome == "downloading"
+
+    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="done"))
+
+    assert sync.get_seen("sonarr", "501")["status"] == "downloaded"
+
+
+def test_a_failed_direct_download_is_cleared_for_retry(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
+
+    sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="error"))
+
+    assert sync.get_seen("sonarr", "501") is None  # cleared, not stuck as "downloading"
+
+    # And the next cycle genuinely retries it rather than skipping a settled row.
+    match_calls = []
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1) or _series_candidate())
+    sync.process_sonarr_item("example.test", SONARR_EPISODE)
+    assert match_calls == [1]
+
+
+def test_a_cancelled_direct_download_is_also_cleared_for_retry(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    monkeypatch.setattr(matching, "match_film", lambda *a, **k: _film_candidate())
+    sync.process_radarr_item("example.test", RADARR_MOVIE)
+
+    sync.on_job_finished(SimpleNamespace(job_id="job-1", status="cancelled"))
+
+    assert sync.get_seen("radarr", "601") is None
+
+
+def test_an_untracked_job_is_a_noop(client):
+    # A manual download, a watch, a queue-path request — none of those were
+    # ever placed in _pending_results, and must not touch the ledger.
+    sync.record_seen("sonarr", "999", "needs_review", "Qualcosa Non Collegato")
+
+    sync.on_job_finished(SimpleNamespace(job_id="some-unrelated-job", status="done"))
+
+    assert sync.get_seen("sonarr", "999")["status"] == "needs_review"
+
+
+def test_a_settled_downloaded_item_is_not_reprocessed(client, open_panel, monkeypatch):
+    sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    match_calls = []
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1))
+
+    outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert outcome == "downloaded"
+    assert match_calls == []
+
+
+# ── Startup reconciliation ──────────────────────────────────────────────────
+
+def test_reconcile_clears_orphaned_downloading_rows(client):
+    sync.record_seen("sonarr", "501", "downloading", "Una Serie")
+    sync.record_seen("radarr", "601", "downloading", "Un Film")
+    sync.record_seen("sonarr", "502", "needs_review", "Un'Altra Serie")
+
+    cleared = sync.reconcile_orphaned_downloads()
+
+    assert cleared == 2
+    assert sync.get_seen("sonarr", "501") is None
+    assert sync.get_seen("radarr", "601") is None
+    assert sync.get_seen("sonarr", "502") is not None  # untouched
+
+
+def test_reconcile_is_a_noop_with_nothing_stuck(client):
+    assert sync.reconcile_orphaned_downloads() == 0

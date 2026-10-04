@@ -25,6 +25,7 @@ this module started and one a human started by hand.
 
 import asyncio
 import logging
+import threading
 
 from app import db
 from app.auth import models as auth_models
@@ -43,10 +44,17 @@ DEFAULT_AUDIO = ["ita"]
 DEFAULT_SUBTITLES = ["ita", "eng"]
 
 # Outcomes that must not be re-attempted every cycle: the sync already placed
-# a download, or the title is already in the library.
+# a download, it is finished, or the title is already in the library.
+#
+# "downloading" belongs here too, but only while the job really is still
+# running — it has to block a second cycle from resubmitting the same item
+# mid-download. on_job_finished is what keeps that honest once the job
+# actually ends: "downloaded" on success, or the row cleared on failure so
+# the next cycle tries again instead of a failed download staying marked
+# settled forever.
 SETTLED_STATUSES = (
-    "downloading", "auto_approved", "queued", "already_in_library", "dismissed",
-    "numbering_mismatch",
+    "downloading", "downloaded", "auto_approved", "queued", "already_in_library",
+    "dismissed", "numbering_mismatch",
 )
 
 
@@ -199,7 +207,8 @@ def _queue_request(media_type: str, candidate: dict, season, episode_number,
 
 
 def _place(media_type: str, domain: str, candidate: dict, season, episode_number,
-           title: str, year: str | None, tmdb_id: int | None = None) -> str:
+           title: str, year: str | None, tmdb_id: int | None = None,
+           service: str | None = None, external_key: str | None = None) -> str:
     draft = _draft_request(media_type, candidate, season, episode_number, title, year)
     try:
         if resolver.is_in_library(draft):
@@ -209,9 +218,13 @@ def _place(media_type: str, domain: str, candidate: dict, season, episode_number
 
     if auth_models.runtime_open_mode():
         if media_type == resolver.EPISODE:
-            _submit_direct_episode(domain, candidate, season, episode_number, title, year)
+            job_id = _submit_direct_episode(domain, candidate, season, episode_number, title, year)
         else:
-            _submit_direct_film(domain, candidate, title, year, tmdb_id)
+            job_id = _submit_direct_film(domain, candidate, title, year, tmdb_id)
+        # Tracked so on_job_finished can correct "downloading" once the job
+        # actually ends — a failure must not stay marked as settled forever.
+        if service and external_key:
+            _track_pending_result(job_id, service, external_key)
         return "downloading"
 
     return _queue_request(media_type, candidate, season, episode_number, title, year)
@@ -242,7 +255,10 @@ def process_sonarr_item(domain: str, record: dict) -> str:
         return "needs_review"
 
     try:
-        outcome = _place(resolver.EPISODE, domain, candidate, season, str(episode_number), title, year)
+        outcome = _place(
+            resolver.EPISODE, domain, candidate, season, str(episode_number), title, year,
+            service="sonarr", external_key=external_key,
+        )
     except EpisodeNotFoundError:
         # The series matched; the source just does not have this exact
         # season/episode under that numbering. Skipped quietly rather than
@@ -281,7 +297,10 @@ def process_radarr_item(domain: str, record: dict) -> str:
         return "needs_review"
 
     try:
-        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year, tmdb_id)
+        outcome = _place(
+            resolver.FILM, domain, candidate, None, None, title, year, tmdb_id,
+            service="radarr", external_key=external_key,
+        )
     except Exception:
         logger.exception("Radarr sync failed to submit %s", title)
         outcome = "submit_failed"
@@ -310,14 +329,20 @@ def resolve_review_item(service: str, external_key: str, candidate: dict) -> str
         year = str(series["year"]) if series.get("year") else None
         season = record.get("seasonNumber")
         episode_number = record.get("episodeNumber")
-        outcome = _place(resolver.EPISODE, domain, candidate, season, str(episode_number), title, year)
+        outcome = _place(
+            resolver.EPISODE, domain, candidate, season, str(episode_number), title, year,
+            service="sonarr", external_key=external_key,
+        )
     elif service == "radarr":
         record = radarr.get_movie(external_key)
         if record is None:
             raise RuntimeError("Film non più trovato su Radarr")
         title = record.get("title") or "?"
         year = str(record["year"]) if record.get("year") else None
-        outcome = _place(resolver.FILM, domain, candidate, None, None, title, year, record.get("tmdbId"))
+        outcome = _place(
+            resolver.FILM, domain, candidate, None, None, title, year, record.get("tmdbId"),
+            service="radarr", external_key=external_key,
+        )
     else:
         raise ValueError(f"Servizio sconosciuto: {service!r}")
 
@@ -376,3 +401,81 @@ async def arr_sync_loop():
             await asyncio.to_thread(run_sync_cycle)
         except Exception:
             logger.exception("Arr sync cycle failed")
+
+
+# ── Keeping the ledger honest about what a direct-submitted job actually did ──
+#
+# "downloading" recorded at submission time is provisional. Only a job
+# ``_place`` itself submitted (open mode) is tracked here — a queue-path
+# request already has its own failure visibility in the request list, and a
+# manual or watch-originated download was never this module's to begin with.
+
+_pending_results_lock = threading.Lock()
+_pending_results: dict[str, tuple[str, str]] = {}  # job_id -> (service, external_key)
+
+
+def _track_pending_result(job_id: str, service: str, external_key: str) -> None:
+    with _pending_results_lock:
+        _pending_results[job_id] = (service, external_key)
+
+
+def on_job_finished(job) -> None:
+    with _pending_results_lock:
+        tracked = _pending_results.pop(job.job_id, None)
+    if tracked is None:
+        return
+    service, external_key = tracked
+
+    if job.status == "done":
+        existing = get_seen(service, external_key)
+        record_seen(service, external_key, "downloaded", existing["title"] if existing else "?")
+        return
+
+    # error or cancelled: clear the row so the next cycle searches and
+    # submits again, instead of a failed download staying marked settled —
+    # and invisible, since neither status belongs in the review list — forever.
+    logger.info(
+        "%s: download for external id %s ended as %s — will retry next cycle",
+        service, external_key, job.status,
+    )
+    db.execute(
+        "DELETE FROM jf_arr_sync_seen WHERE service = ? AND external_key = ?",
+        (service, external_key),
+    )
+
+
+_listener_registered = False
+_listener_lock = threading.Lock()
+
+
+def register_result_listener():
+    """Register once, from the app lifespan, alongside the other job listeners."""
+    global _listener_registered
+    with _listener_lock:
+        if _listener_registered:
+            return
+        from app.jobs import job_manager
+
+        job_manager.add_listener(on_job_finished)
+        _listener_registered = True
+
+
+def reconcile_orphaned_downloads() -> int:
+    """Clear ``downloading`` ledger rows left over from a process that
+    stopped before ``on_job_finished`` could correct them — a crash, a
+    deploy, a plain restart, same as ``requests.service.reconcile_orphaned_requests``.
+
+    ``_pending_results`` starts empty on every launch, same as the job
+    manager itself, so nothing is or ever will be tracking a row still
+    sitting in ``downloading`` here: it is not "possibly" orphaned, it
+    always is. Cleared rather than resolved into a status, so the next sync
+    cycle re-searches and resubmits it — there is no job left to ask.
+
+    Called once from the app lifespan, before the sync loop's first pass.
+    """
+    rows = db.query("SELECT service, external_key FROM jf_arr_sync_seen WHERE status = 'downloading'")
+    if not rows:
+        return 0
+    db.execute("DELETE FROM jf_arr_sync_seen WHERE status = 'downloading'")
+    logger.warning("Cleared %d orphaned arr-sync download(s) left over from a previous run", len(rows))
+    return len(rows)
