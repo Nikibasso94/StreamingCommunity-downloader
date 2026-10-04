@@ -10,12 +10,19 @@ import glob
 import logging
 import os
 import shutil
+import time
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15
+
+# How long to wait for a fire-and-forget command (a rescan) to actually
+# finish before giving up — see post_command's docstring for why this
+# matters at all.
+_COMMAND_POLL_TIMEOUT = 30
+_COMMAND_POLL_INTERVAL = 1.0
 
 
 def get(base_url: str, api_key: str, path: str, params: dict | None = None):
@@ -31,8 +38,19 @@ def get(base_url: str, api_key: str, path: str, params: dict | None = None):
     return response.json()
 
 
-def post_command(base_url: str, api_key: str, name: str, **fields) -> bool:
-    """Fire a command and report whether it was accepted. Never raises."""
+def post_command(base_url: str, api_key: str, name: str, wait: bool = False, **fields) -> bool:
+    """Fire a command and report whether it was accepted — or, with
+    ``wait=True``, block until Sonarr/Radarr reports it actually finished.
+
+    Sonarr/Radarr queue a command and answer the POST immediately, long
+    before the command itself has run — verified against a real Sonarr,
+    where firing ``RenameSeries`` right after ``RescanSeries`` reorganised
+    nothing, because the rescan had not finished long enough to have
+    noticed the file yet. Anything that fires a second command depending on
+    the first (a rename after the rescan that is supposed to make
+    Sonarr/Radarr aware of the file at all) needs ``wait=True``; a rescan
+    with nothing queued after it does not.
+    """
     try:
         response = requests.post(
             f"{base_url.rstrip('/')}/api/v3/command",
@@ -42,10 +60,28 @@ def post_command(base_url: str, api_key: str, name: str, **fields) -> bool:
         )
         if not response.ok:
             logger.warning("%s command returned HTTP %d", name, response.status_code)
-        return response.ok
+            return False
+        command_id = response.json().get("id")
     except Exception as exc:
         logger.warning("%s command failed: %s", name, type(exc).__name__)
         return False
+
+    if not wait or command_id is None:
+        return True
+
+    deadline = time.monotonic() + _COMMAND_POLL_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            status = get(base_url, api_key, f"command/{command_id}")
+        except Exception as exc:
+            logger.warning("%s command status check failed: %s", name, type(exc).__name__)
+            return True
+        if status.get("status") in ("completed", "failed"):
+            return status.get("status") == "completed"
+        time.sleep(_COMMAND_POLL_INTERVAL)
+
+    logger.warning("%s command did not finish within %ss", name, _COMMAND_POLL_TIMEOUT)
+    return False
 
 
 def system_status(base_url: str, api_key: str) -> dict:

@@ -171,13 +171,19 @@ def rescan_series(series_id: int | None = None) -> bool:
     """``series_id`` omitted rescans every series; given, it is scoped to
     just that one — use it once ``import_into_library`` has placed a file in
     its folder, so Sonarr recognises it without scanning the whole library
-    for one new episode."""
+    for one new episode.
+
+    Waits for the rescan to actually finish rather than just being accepted:
+    ``import_into_library`` fires ``RenameSeries`` right after this returns,
+    which needs Sonarr to have already noticed the file — see
+    ``arr_client.post_command``.
+    """
     url, api_key = get_config()
     if not url or not api_key:
         logger.info("Sonarr rescan skipped: not configured")
         return False
     fields = {"seriesId": series_id} if series_id is not None else {}
-    return arr_client.post_command(url, api_key, "RescanSeries", **fields)
+    return arr_client.post_command(url, api_key, "RescanSeries", wait=True, **fields)
 
 
 def rename_series(series_id: int) -> bool:

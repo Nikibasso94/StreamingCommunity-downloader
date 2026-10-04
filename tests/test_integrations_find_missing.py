@@ -384,3 +384,76 @@ def test_resolve_tag_id_returns_none_on_network_error(monkeypatch):
     monkeypatch.setattr(arr_client, "get", fail)
 
     assert arr_client.resolve_tag_id("http://x", "key", "no-panel") is None
+
+
+# ── post_command(wait=True): a rescan must finish, not just be accepted ────────
+#
+# Verified against a real Sonarr: firing RenameSeries right after RescanSeries
+# reorganised nothing, because Sonarr answers the POST the instant the command
+# is *queued*, long before it has actually run and noticed the file.
+
+class _FakeResponse:
+    def __init__(self, ok=True, status_code=201, payload=None):
+        self.ok = ok
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+
+def test_post_command_wait_polls_until_the_command_completes(monkeypatch):
+    from app.integrations import arr_client
+
+    statuses = iter(["queued", "started", "completed"])
+    monkeypatch.setattr(arr_client.requests, "post", lambda *a, **k: _FakeResponse(payload={"id": 99}))
+    monkeypatch.setattr(arr_client, "get", lambda *a, **k: {"status": next(statuses)})
+    monkeypatch.setattr(arr_client.time, "sleep", lambda *a, **k: None)
+
+    assert arr_client.post_command("http://x", "key", "RescanSeries", wait=True, seriesId=1) is True
+
+
+def test_post_command_wait_reports_a_failed_command(monkeypatch):
+    from app.integrations import arr_client
+
+    monkeypatch.setattr(arr_client.requests, "post", lambda *a, **k: _FakeResponse(payload={"id": 99}))
+    monkeypatch.setattr(arr_client, "get", lambda *a, **k: {"status": "failed"})
+
+    assert arr_client.post_command("http://x", "key", "RescanSeries", wait=True, seriesId=1) is False
+
+
+def test_post_command_wait_times_out_as_a_failure(monkeypatch):
+    from app.integrations import arr_client
+
+    monkeypatch.setattr(arr_client.requests, "post", lambda *a, **k: _FakeResponse(payload={"id": 99}))
+    monkeypatch.setattr(arr_client, "get", lambda *a, **k: {"status": "started"})
+    monkeypatch.setattr(arr_client.time, "sleep", lambda *a, **k: None)
+
+    times = iter([0.0, 5.0, 999.0])
+    monkeypatch.setattr(arr_client.time, "monotonic", lambda: next(times))
+
+    assert arr_client.post_command("http://x", "key", "RescanSeries", wait=True, seriesId=1) is False
+
+
+def test_post_command_without_wait_returns_as_soon_as_accepted(monkeypatch):
+    from app.integrations import arr_client
+
+    monkeypatch.setattr(arr_client.requests, "post", lambda *a, **k: _FakeResponse(payload={"id": 99}))
+    monkeypatch.setattr(
+        arr_client, "get",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not poll without wait=True")),
+    )
+
+    assert arr_client.post_command("http://x", "key", "RescanSeries", seriesId=1) is True
+
+
+def test_post_command_wait_accepts_a_command_with_no_id_without_polling(monkeypatch):
+    from app.integrations import arr_client
+
+    monkeypatch.setattr(arr_client.requests, "post", lambda *a, **k: _FakeResponse(payload={}))
+    monkeypatch.setattr(
+        arr_client, "get",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not poll with no command id")),
+    )
+
+    assert arr_client.post_command("http://x", "key", "RescanSeries", wait=True, seriesId=1) is True

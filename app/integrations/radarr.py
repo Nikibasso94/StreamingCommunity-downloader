@@ -139,13 +139,19 @@ def rescan_movie(movie_id: int | None = None) -> bool:
     """``movie_id`` omitted rescans every movie; given, it is scoped to just
     that one — use it once ``import_into_library`` has placed a file in its
     folder, so Radarr recognises it without scanning the whole library for
-    one new file."""
+    one new file.
+
+    Waits for the rescan to actually finish rather than just being accepted:
+    ``import_into_library`` fires ``RenameMovie`` right after this returns,
+    which needs Radarr to have already noticed the file — see
+    ``arr_client.post_command``.
+    """
     url, api_key = get_config()
     if not url or not api_key:
         logger.info("Radarr rescan skipped: not configured")
         return False
     fields = {"movieId": movie_id} if movie_id is not None else {}
-    return arr_client.post_command(url, api_key, "RescanMovie", **fields)
+    return arr_client.post_command(url, api_key, "RescanMovie", wait=True, **fields)
 
 
 def rename_movie(movie_id: int) -> bool:
