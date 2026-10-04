@@ -180,6 +180,7 @@ def test_radarr_import_into_library_moves_then_scopes_the_rescan(tmp_path, monke
 
     calls = []
     monkeypatch.setattr(radarr, "rescan_movie", lambda movie_id: calls.append(movie_id) or True)
+    monkeypatch.setattr(radarr, "rename_movie", lambda *a, **k: True)
 
     ok = radarr.import_into_library(str(video), movie)
 
@@ -207,6 +208,7 @@ def test_sonarr_import_into_library_moves_then_scopes_the_rescan(tmp_path, monke
 
     calls = []
     monkeypatch.setattr(sonarr, "rescan_series", lambda series_id: calls.append(series_id) or True)
+    monkeypatch.setattr(sonarr, "rename_series", lambda *a, **k: True)
 
     ok = sonarr.import_into_library(str(video), episode)
 
@@ -224,6 +226,77 @@ def test_sonarr_import_into_library_skips_rescan_when_the_move_fails(monkeypatch
 
     assert ok is False
     assert calls == []
+
+
+# ── Reorganising into the app's own folder/filename convention ─────────────────
+
+def test_radarr_import_into_library_also_asks_radarr_to_rename(tmp_path, monkeypatch):
+    """Verified against a real Radarr: a file dropped straight into the
+    movie's root folder sits there as-is until ``RenameMovie`` runs — the
+    rescan alone never reorganises it."""
+    video = tmp_path / "Film.mkv"
+    video.write_text("video")
+    movie = {"id": 7, "path": str(tmp_path / "library" / "Film (2020)")}
+
+    monkeypatch.setattr(radarr, "rescan_movie", lambda *a, **k: True)
+    calls = []
+    monkeypatch.setattr(radarr, "rename_movie", lambda movie_id: calls.append(movie_id) or True)
+
+    assert radarr.import_into_library(str(video), movie) is True
+    assert calls == [7]
+
+
+def test_radarr_import_into_library_skips_rename_when_the_rescan_fails(monkeypatch):
+    monkeypatch.setattr(radarr.arr_client, "place_in_library", lambda *a, **k: "/x/Film.mkv")
+    monkeypatch.setattr(radarr, "rescan_movie", lambda *a, **k: False)
+    calls = []
+    monkeypatch.setattr(radarr, "rename_movie", lambda *a, **k: calls.append("rename") or True)
+
+    ok = radarr.import_into_library("/nowhere/Film.mkv", {"id": 7, "path": "/x"})
+
+    assert ok is False
+    assert calls == []
+
+
+def test_radarr_rename_movie_is_a_noop_when_not_configured(client, monkeypatch):
+    monkeypatch.setattr(radarr, "get_config", lambda: ("", ""))
+
+    assert radarr.rename_movie(7) is False
+
+
+def test_sonarr_import_into_library_also_asks_sonarr_to_rename(tmp_path, monkeypatch):
+    """Verified against a real Sonarr: it does not create the season
+    subfolder or reorganise the filename on its own — ``RenameSeries`` is
+    what does both, and only after the rescan has made it aware of the
+    file."""
+    video = tmp_path / "Episode.mkv"
+    video.write_text("video")
+    episode = {"id": 9, "series": {"id": 3, "path": str(tmp_path / "library" / "Una Serie")}}
+
+    monkeypatch.setattr(sonarr, "rescan_series", lambda *a, **k: True)
+    calls = []
+    monkeypatch.setattr(sonarr, "rename_series", lambda series_id: calls.append(series_id) or True)
+
+    assert sonarr.import_into_library(str(video), episode) is True
+    assert calls == [3]
+
+
+def test_sonarr_import_into_library_skips_rename_when_the_rescan_fails(monkeypatch):
+    monkeypatch.setattr(sonarr.arr_client, "place_in_library", lambda *a, **k: "/x/Episode.mkv")
+    monkeypatch.setattr(sonarr, "rescan_series", lambda *a, **k: False)
+    calls = []
+    monkeypatch.setattr(sonarr, "rename_series", lambda *a, **k: calls.append("rename") or True)
+
+    ok = sonarr.import_into_library("/nowhere/Episode.mkv", {"id": 9, "series": {"id": 3, "path": "/x"}})
+
+    assert ok is False
+    assert calls == []
+
+
+def test_sonarr_rename_series_is_a_noop_when_not_configured(client, monkeypatch):
+    monkeypatch.setattr(sonarr, "get_config", lambda: ("", ""))
+
+    assert sonarr.rename_series(3) is False
 
 
 # ── Skip tag ─────────────────────────────────────────────────────────────────

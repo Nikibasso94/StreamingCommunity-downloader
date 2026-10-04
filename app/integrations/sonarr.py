@@ -180,9 +180,29 @@ def rescan_series(series_id: int | None = None) -> bool:
     return arr_client.post_command(url, api_key, "RescanSeries", **fields)
 
 
+def rename_series(series_id: int) -> bool:
+    """Ask Sonarr to reorganise this series into its own folder/filename
+    convention (``seasonFolderFormat``, and ``standardEpisodeFormat`` when
+    "Rename episodes" is on in Media Management).
+
+    Verified against a real Sonarr: dropping a file straight into the
+    series' root folder (what ``import_into_library`` does) leaves it there
+    — Sonarr recognises it on a rescan but does not reorganise it on its
+    own. This command is what actually creates the season subfolder and
+    moves the file into it, renaming it too if the toggle is on; skipped
+    quietly if "Rename episodes" is off, since the filename is then exactly
+    what the admin asked Sonarr to leave alone.
+    """
+    url, api_key = get_config()
+    if not url or not api_key:
+        return False
+    return arr_client.post_command(url, api_key, "RenameSeries", seriesIds=[series_id])
+
+
 def import_into_library(output_path: str, episode: dict) -> bool:
     """Move a finished download into the episode's series folder and have
-    Sonarr pick it up from there.
+    Sonarr pick it up from there, then let it reorganise that series into
+    its own season-folder/filename convention.
 
     Verified against a real Sonarr: this is the combination that actually
     works, and the only one that does. Sonarr's "scan this folder and
@@ -195,10 +215,15 @@ def import_into_library(output_path: str, episode: dict) -> bool:
     episodes apart within the series — unlike a film, where the whole
     folder is unambiguously one title — but not Sonarr's own naming scheme;
     an arbitrary name carrying "S01E04" was picked up exactly like one
-    carrying its preferred format.
+    carrying its preferred format. ``rename_series`` runs after, not
+    instead: the rescan is what makes Sonarr aware of the file at all, and
+    only an already-known file can be renamed.
     """
     series = episode.get("series") or {}
     new_path = arr_client.place_in_library(output_path, series["path"])
     if new_path is None:
         return False
-    return rescan_series(series["id"])
+    if not rescan_series(series["id"]):
+        return False
+    rename_series(series["id"])
+    return True

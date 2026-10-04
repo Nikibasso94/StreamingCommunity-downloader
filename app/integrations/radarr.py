@@ -148,9 +148,21 @@ def rescan_movie(movie_id: int | None = None) -> bool:
     return arr_client.post_command(url, api_key, "RescanMovie", **fields)
 
 
+def rename_movie(movie_id: int) -> bool:
+    """Ask Radarr to rename this movie's file to its own convention
+    (``standardMovieFormat``) when "Rename movies" is on in Media
+    Management; a quiet no-op otherwise, since the filename is then exactly
+    what the admin asked Radarr to leave alone."""
+    url, api_key = get_config()
+    if not url or not api_key:
+        return False
+    return arr_client.post_command(url, api_key, "RenameMovie", movieIds=[movie_id])
+
+
 def import_into_library(output_path: str, movie: dict) -> bool:
     """Move a finished download into ``movie``'s own folder and have Radarr
-    pick it up from there.
+    pick it up from there, then let it rename the file to its own
+    convention.
 
     Verified against a real Radarr: this is the combination that actually
     works, and the only one that does. Radarr's "scan this folder and
@@ -159,9 +171,14 @@ def import_into_library(output_path: str, movie: dict) -> bool:
     folder it has no history for, it silently finds nothing, even mounted
     and reachable. A plain ``RescanMovie``, scoped to one movie whose folder
     now actually holds a file, has no such requirement — and does not care
-    what the file is named, only that it is there.
+    what the file is named, only that it is there. ``rename_movie`` runs
+    after, not instead: the rescan is what makes Radarr aware of the file
+    at all, and only an already-known file can be renamed.
     """
     new_path = arr_client.place_in_library(output_path, movie["path"])
     if new_path is None:
         return False
-    return rescan_movie(movie["id"])
+    if not rescan_movie(movie["id"]):
+        return False
+    rename_movie(movie["id"])
+    return True

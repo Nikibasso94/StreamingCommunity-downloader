@@ -579,6 +579,16 @@ Sonarr were each checked against a file carrying an unrelated name and found it 
 as it sits in the right folder (Sonarr still needs a season/episode number *somewhere* in the name,
 to tell episodes apart within one series — a film's whole folder is unambiguously one title).
 
+Right after that rescan, the panel also asks Radarr/Sonarr to rename the file
+(`RenameMovie`/`RenameSeries`) — their own command, their own naming settings. Verified against a
+real Sonarr: dropped straight into the series' root folder, a file sits there as a flat file until
+this runs; `RenameSeries` is what creates the season subfolder (`Stagione {season}` or whatever
+**Impostazioni Media → Rinomina** has configured there) and moves the file into it, and renames it
+too as long as "Rinomina episodi"/"Rinomina film" is switched on in Radarr/Sonarr itself — switched
+off, the command still reorganises the folder and just leaves the filename alone, since that is what
+the toggle being off means. Nothing about this is configured on the panel's side: whatever naming
+scheme Radarr/Sonarr already use for everything else is what a panel-delivered file gets too.
+
 Owning a request queued with accounts enabled is still a gap worth knowing: a sync match placed
 through the normal request queue needs an owning user (`arr_managed_by_user_id` in `data.json`) —
 there is no UI for it yet, so without one the sync leaves every match in the review list rather than
