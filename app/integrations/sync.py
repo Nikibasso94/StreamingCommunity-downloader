@@ -239,6 +239,46 @@ def _place(media_type: str, domain: str, candidate: dict, season, episode_number
 _NOT_MATCHED = object()
 
 
+def _retry_handoff(service: str, record: dict, media_type: str, title: str,
+                    year: str | None, season, episode_number) -> None:
+    """Hand a file this module already downloaded to Sonarr/Radarr again,
+    for an item their own wanted/missing list still carries here — proof a
+    prior hand-off (``app.downloads_hooks``, right after that download
+    finished) did not complete, whether it was never attempted at all
+    (``already_in_library``, downloaded by something other than this sync)
+    or attempted and failed (a mount mismatch, Sonarr/Radarr unreachable at
+    the time). Nothing here re-downloads anything: the file is found
+    exactly where a finished download already left it, the same way the
+    library check above finds it, and handed to the same
+    ``import_into_library`` a fresh download's own hook would have used.
+    """
+    draft = _draft_request(media_type, {"id": 0, "slug": None, "poster": None},
+                            season, episode_number, title, year)
+    path = resolver.existing_file(draft)
+    if path is None:
+        return
+    module = sonarr if service == "sonarr" else radarr
+    try:
+        module.import_into_library(path, record)
+    except Exception:
+        logger.exception("%s: retrying the hand-off for «%s» failed", service, title)
+
+
+def _settled_status(service: str, record: dict, media_type: str, title: str,
+                     year: str | None, season, episode_number) -> str | None:
+    """``None`` when there is nothing settled yet and the item still needs
+    matching. Otherwise the settled status, after first retrying the
+    Sonarr/Radarr hand-off if that status is one a prior attempt may not
+    have actually completed — see ``_retry_handoff``.
+    """
+    existing = get_seen(service, str(record.get("id")))
+    if not existing or existing["status"] not in SETTLED_STATUSES:
+        return None
+    if existing["status"] in ("downloaded", "already_in_library"):
+        _retry_handoff(service, record, media_type, title, year, season, episode_number)
+    return existing["status"]
+
+
 def process_sonarr_item(domain: str, record: dict, candidate=_NOT_MATCHED) -> str:
     external_key = str(record.get("id"))
     series = record.get("series") or {}
@@ -247,9 +287,9 @@ def process_sonarr_item(domain: str, record: dict, candidate=_NOT_MATCHED) -> st
     season = record.get("seasonNumber")
     episode_number = record.get("episodeNumber")
 
-    existing = get_seen("sonarr", external_key)
-    if existing and existing["status"] in SETTLED_STATUSES:
-        return existing["status"]
+    settled = _settled_status("sonarr", record, resolver.EPISODE, title, year, season, str(episode_number))
+    if settled:
+        return settled
 
     if candidate is _NOT_MATCHED:
         try:
@@ -309,9 +349,11 @@ def process_sonarr_series(domain: str, series: dict, episodes: list[dict]) -> di
     pending = []
     outcomes: dict[str, int] = {}
     for record in episodes:
-        existing = get_seen("sonarr", str(record.get("id")))
-        if existing and existing["status"] in SETTLED_STATUSES:
-            outcomes[existing["status"]] = outcomes.get(existing["status"], 0) + 1
+        season = record.get("seasonNumber")
+        episode_number = record.get("episodeNumber")
+        settled = _settled_status("sonarr", record, resolver.EPISODE, title, year, season, str(episode_number))
+        if settled:
+            outcomes[settled] = outcomes.get(settled, 0) + 1
         else:
             pending.append(record)
 
@@ -336,9 +378,9 @@ def process_radarr_item(domain: str, record: dict) -> str:
     year = str(record["year"]) if record.get("year") else None
     tmdb_id = record.get("tmdbId")
 
-    existing = get_seen("radarr", external_key)
-    if existing and existing["status"] in SETTLED_STATUSES:
-        return existing["status"]
+    settled = _settled_status("radarr", record, resolver.FILM, title, year, None, None)
+    if settled:
+        return settled
 
     try:
         candidate = matching.match_film(title, year, tmdb_id, domain)

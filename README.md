@@ -566,6 +566,15 @@ fails after being submitted — a dead link, a stalled segment, the container re
 — instead of sitting marked as in progress forever with nothing left running it. The same recovery
 runs once at startup, for anything a previous run left mid-download when it stopped.
 
+A download that *succeeded* is retried differently: not the download itself, only the hand-off to
+Radarr/Sonarr described next. If that hand-off did not complete — Radarr/Sonarr were unreachable
+right then, or the move failed for a reason since fixed, like the mount mismatch described there —
+the file already sits correctly in this panel's own library, and every later sync cycle keeps
+retrying just that hand-off, using the file already on disk, for as long as Radarr/Sonarr's own
+wanted/missing list still carries the episode or film in question. Nothing about this is visible in
+**"Da verificare"**: that list is only for a title the matcher itself could not place, not for one
+already matched, downloaded and simply not yet delivered.
+
 **A manual download gets the same treatment, not only a synced one.** After *any* finished film or
 episode — a manual search, a followed series, the sync, it makes no difference — the post-download
 refresh checks whether it is something Radarr/Sonarr themselves are missing: a film by the exact

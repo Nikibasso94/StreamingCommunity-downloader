@@ -7,6 +7,7 @@ source and a throwaway library, the same fixture app.watches' own poller
 tests use for exactly this reason.
 """
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -378,6 +379,100 @@ def test_a_settled_downloaded_item_is_not_reprocessed(client, open_panel, monkey
 
     assert outcome == "downloaded"
     assert match_calls == []
+
+
+# ── Retrying a hand-off a prior attempt never completed ─────────────────────
+#
+# "downloaded"/"already_in_library" mean a file already sits in the panel's
+# own library; neither means Sonarr/Radarr actually received it. Sonarr/Radarr
+# listing the item again on this very cycle (SONARR_EPISODE/RADARR_MOVIE,
+# what every test here feeds the function under test) is itself the proof a
+# prior hand-off never completed — so unlike "downloading" or "queued", these
+# two retry the hand-off every cycle until it actually works.
+
+def _write_existing_episode_file(open_panel) -> str:
+    from app.requests import resolver
+
+    draft = sync._draft_request(resolver.EPISODE, _series_candidate(), 1, "4", "Una Serie", "2019")
+    path = resolver.destination_path(draft)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("video")
+    return path
+
+
+def _write_existing_film_file(open_panel) -> str:
+    from app.requests import resolver
+
+    draft = sync._draft_request(resolver.FILM, _film_candidate(), None, None, "Un Film", "2020")
+    path = resolver.destination_path(draft)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("video")
+    return path
+
+
+def test_a_downloaded_sonarr_item_still_wanted_retries_the_hand_off(client, open_panel, monkeypatch):
+    sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    _write_existing_episode_file(open_panel)
+    calls = []
+    monkeypatch.setattr(sonarr, "import_into_library", lambda path, record: calls.append((path, record)) or True)
+
+    outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert outcome == "downloaded"
+    assert len(calls) == 1
+    assert calls[0][1] is SONARR_EPISODE
+
+
+def test_an_already_in_library_sonarr_item_also_retries_the_hand_off(client, open_panel, monkeypatch):
+    sync.record_seen("sonarr", "501", "already_in_library", "Una Serie")
+    _write_existing_episode_file(open_panel)
+    calls = []
+    monkeypatch.setattr(sonarr, "import_into_library", lambda path, record: calls.append(path) or True)
+
+    sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert len(calls) == 1
+
+
+def test_the_hand_off_retry_does_nothing_without_a_file_on_disk(client, open_panel, monkeypatch):
+    sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    calls = []
+    monkeypatch.setattr(sonarr, "import_into_library", lambda *a, **k: calls.append(1) or True)
+
+    outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
+
+    assert outcome == "downloaded"
+    assert calls == []
+
+
+def test_a_downloaded_radarr_item_still_wanted_retries_the_hand_off(client, open_panel, monkeypatch):
+    sync.record_seen("radarr", "601", "downloaded", "Un Film")
+    _write_existing_film_file(open_panel)
+    calls = []
+    monkeypatch.setattr(radarr, "import_into_library", lambda path, record: calls.append((path, record)) or True)
+
+    outcome = sync.process_radarr_item("example.test", RADARR_MOVIE)
+
+    assert outcome == "downloaded"
+    assert len(calls) == 1
+    assert calls[0][1] is RADARR_MOVIE
+
+
+def test_a_grouped_sonarr_series_also_retries_a_downloaded_episode_s_hand_off(
+    client, open_panel, monkeypatch,
+):
+    sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    _write_existing_episode_file(open_panel)
+    calls = []
+    monkeypatch.setattr(sonarr, "import_into_library", lambda path, record: calls.append(path) or True)
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: pytest.fail("should not match a settled item"))
+
+    outcomes = sync.process_sonarr_series("example.test", SONARR_EPISODE["series"], [SONARR_EPISODE])
+
+    assert outcomes == {"downloaded": 1}
+    assert len(calls) == 1
 
 
 # ── Startup reconciliation ──────────────────────────────────────────────────
