@@ -96,3 +96,38 @@ def test_no_search_results_is_no_match(monkeypatch):
 
     assert matching.match_film("Qualcosa", "2020", 1, "example.test") is None
     assert matching.match_series("Qualcosa", "2020", "example.test") is None
+
+
+def test_match_series_by_exact_imdb_id(monkeypatch):
+    from app.core import metadata, page
+
+    candidates = [_candidate(1, "Serie Sbagliata"), _candidate(2, "Serie Giusta")]
+    monkeypatch.setattr(page, "search", lambda *a, **k: candidates)
+    monkeypatch.setattr(
+        metadata, "title_metadata",
+        lambda media_type, title_id, slug, version: {"imdb_id": "tt0000002" if title_id == 2 else "tt0000001"},
+    )
+
+    result = matching.match_series("Serie Qualunque", "2020", "example.test", imdb_id="tt0000002")
+
+    assert result["id"] == 2
+
+
+def test_match_series_with_an_imdb_id_never_falls_back_to_a_fuzzy_guess(monkeypatch):
+    from app.core import metadata, page
+
+    # The title is an exact string match, but no candidate carries this imdb_id.
+    monkeypatch.setattr(page, "search", lambda *a, **k: [_candidate(1, "Serie Qualunque")])
+    monkeypatch.setattr(metadata, "title_metadata", lambda *a, **k: {"imdb_id": "tt0000001"})
+
+    assert matching.match_series("Serie Qualunque", "2020", "example.test", imdb_id="tt9999999") is None
+
+
+def test_match_series_without_an_imdb_id_falls_back_to_title_and_year(monkeypatch):
+    from app.core import page
+
+    monkeypatch.setattr(page, "search", lambda *a, **k: [_candidate(1, "Il Mio Titolo Preciso", "2020-05-01")])
+
+    result = matching.match_series("Il Mio Titolo Preciso", "2020", "example.test", imdb_id=None)
+
+    assert result["id"] == 1

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 SETTING_RADARR_URL = "radarr_url"
 SETTING_RADARR_API_KEY = "radarr_api_key"
+SETTING_RADARR_SKIP_TAG = "radarr_skip_tag"
 
 
 def get_config() -> tuple[str, str]:
@@ -21,6 +22,25 @@ def get_config() -> tuple[str, str]:
 def set_config(url: str, api_key: str) -> None:
     auth_models.set_setting(SETTING_RADARR_URL, (url or "").strip())
     auth_models.set_setting(SETTING_RADARR_API_KEY, (api_key or "").strip())
+
+
+def get_skip_tag() -> str:
+    """A Radarr tag that keeps a movie out of this panel entirely — synced,
+    and exempt from the generic post-download match too, since the point of
+    the tag is "hands off this one", not only "don't search for it"."""
+    return (auth_models.get_setting(SETTING_RADARR_SKIP_TAG) or "").strip()
+
+
+def set_skip_tag(label: str) -> None:
+    auth_models.set_setting(SETTING_RADARR_SKIP_TAG, (label or "").strip())
+
+
+def _is_skipped(movie: dict, url: str, api_key: str) -> bool:
+    label = get_skip_tag()
+    if not label:
+        return False
+    tag_id = arr_client.resolve_tag_id(url, api_key, label)
+    return tag_id is not None and tag_id in (movie.get("tags") or [])
 
 
 def is_connected() -> bool:
@@ -76,6 +96,9 @@ def find_missing_movie(tmdb_id: int) -> dict | None:
         return None
     for movie in movies or []:
         if movie.get("tmdbId") == tmdb_id:
+            if _is_skipped(movie, url, api_key):
+                logger.info("Radarr: tmdb_id %s is tagged to skip — not importing", tmdb_id)
+                return None
             if movie.get("monitored") and not movie.get("hasFile"):
                 return movie
             logger.info(
@@ -88,7 +111,8 @@ def find_missing_movie(tmdb_id: int) -> dict | None:
 
 
 def wanted_missing() -> list[dict]:
-    """Monitored movies Radarr has not downloaded yet.
+    """Monitored movies Radarr has not downloaded yet, minus any carrying
+    the configured skip tag.
 
     Each record is a Radarr movie resource, carrying its own ``tmdbId`` —
     unlike Sonarr's episodes, no extra include is needed for it.
@@ -97,10 +121,18 @@ def wanted_missing() -> list[dict]:
     if not url or not api_key:
         return []
     try:
-        return arr_client.wanted_missing_all(url, api_key)
+        movies = arr_client.wanted_missing_all(url, api_key)
     except Exception as exc:
         logger.warning("Radarr wanted/missing failed: %s", type(exc).__name__)
         return []
+
+    label = get_skip_tag()
+    if not label:
+        return movies
+    tag_id = arr_client.resolve_tag_id(url, api_key, label)
+    if tag_id is None:
+        return movies
+    return [m for m in movies if tag_id not in (m.get("tags") or [])]
 
 
 def rescan_movie(movie_id: int | None = None) -> bool:

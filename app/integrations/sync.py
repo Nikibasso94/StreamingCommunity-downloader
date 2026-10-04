@@ -232,7 +232,14 @@ def _place(media_type: str, domain: str, candidate: dict, season, episode_number
 
 # ── Per-item processing ────────────────────────────────────────────────────────
 
-def process_sonarr_item(domain: str, record: dict) -> str:
+# Default for process_sonarr_item's ``candidate`` — distinct from ``None``,
+# which process_sonarr_series passes explicitly to mean "already tried to
+# match the series and it failed", so a batch of ten missing episodes does
+# not repeat the same failed search ten times.
+_NOT_MATCHED = object()
+
+
+def process_sonarr_item(domain: str, record: dict, candidate=_NOT_MATCHED) -> str:
     external_key = str(record.get("id"))
     series = record.get("series") or {}
     title = series.get("title") or record.get("title") or "?"
@@ -244,11 +251,12 @@ def process_sonarr_item(domain: str, record: dict) -> str:
     if existing and existing["status"] in SETTLED_STATUSES:
         return existing["status"]
 
-    try:
-        candidate = matching.match_series(title, year, domain)
-    except Exception:
-        logger.exception("Sonarr matching failed for %s", title)
-        candidate = None
+    if candidate is _NOT_MATCHED:
+        try:
+            candidate = matching.match_series(title, year, domain, series.get("imdbId"))
+        except Exception:
+            logger.exception("Sonarr matching failed for %s", title)
+            candidate = None
 
     if candidate is None:
         record_seen("sonarr", external_key, "needs_review", title)
@@ -272,6 +280,54 @@ def process_sonarr_item(domain: str, record: dict) -> str:
         outcome = "submit_failed"
     record_seen("sonarr", external_key, outcome, title)
     return outcome
+
+
+def group_episodes_by_series(records: list[dict]) -> list[tuple[dict, list[dict]]]:
+    """Sonarr's wanted/missing lists individual episodes; grouped here by
+    series so the sync matches the source once per series instead of once
+    per missing episode — a show missing ten episodes used to repeat the
+    exact same search ten times, for the exact same series, over and over.
+    """
+    groups: dict = {}
+    order: list = []
+    for record in records:
+        series_id = (record.get("series") or {}).get("id")
+        if series_id not in groups:
+            groups[series_id] = (record.get("series") or {}, [])
+            order.append(series_id)
+        groups[series_id][1].append(record)
+    return [groups[sid] for sid in order]
+
+
+def process_sonarr_series(domain: str, series: dict, episodes: list[dict]) -> dict:
+    """All of one series' missing episodes, matched against the source once
+    and placed once each. Returns a count per outcome, for the cycle's own
+    summary."""
+    title = series.get("title") or "?"
+    year = str(series["year"]) if series.get("year") else None
+
+    pending = []
+    outcomes: dict[str, int] = {}
+    for record in episodes:
+        existing = get_seen("sonarr", str(record.get("id")))
+        if existing and existing["status"] in SETTLED_STATUSES:
+            outcomes[existing["status"]] = outcomes.get(existing["status"], 0) + 1
+        else:
+            pending.append(record)
+
+    if not pending:
+        return outcomes
+
+    try:
+        candidate = matching.match_series(title, year, domain, series.get("imdbId"))
+    except Exception:
+        logger.exception("Sonarr matching failed for %s", title)
+        candidate = None
+
+    for record in pending:
+        outcome = process_sonarr_item(domain, record, candidate=candidate)
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+    return outcomes
 
 
 def process_radarr_item(domain: str, record: dict) -> str:
@@ -375,12 +431,12 @@ def run_sync_cycle() -> dict:
         return summary
 
     if settings.get("sonarr_sync_wanted") and sonarr.is_connected():
-        for record in sonarr.wanted_missing():
+        for series, episodes in group_episodes_by_series(sonarr.wanted_missing()):
             try:
-                process_sonarr_item(domain, record)
-                summary["sonarr"] += 1
+                outcomes = process_sonarr_series(domain, series, episodes)
+                summary["sonarr"] += sum(outcomes.values())
             except Exception:
-                logger.exception("Sonarr sync item failed")
+                logger.exception("Sonarr sync series failed")
 
     if settings.get("radarr_sync_wanted") and radarr.is_connected():
         for record in radarr.wanted_missing():

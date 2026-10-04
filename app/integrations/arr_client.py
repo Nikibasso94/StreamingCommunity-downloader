@@ -53,6 +53,25 @@ def system_status(base_url: str, api_key: str) -> dict:
     return get(base_url, api_key, "system/status")
 
 
+def resolve_tag_id(base_url: str, api_key: str, label: str) -> int | None:
+    """The id behind a tag's label — Sonarr/Radarr filter movies/series by
+    tag id, never by the name an admin typed. Case-insensitive, since the tag
+    picker in each app's own UI already lower-cases labels on save. ``None``
+    if no such tag exists (including when Sonarr/Radarr is unreachable)."""
+    label = (label or "").strip().lower()
+    if not label:
+        return None
+    try:
+        tags = get(base_url, api_key, "tag")
+    except Exception as exc:
+        logger.warning("Tag lookup failed: %s", type(exc).__name__)
+        return None
+    for tag in tags or []:
+        if (tag.get("label") or "").strip().lower() == label:
+            return tag.get("id")
+    return None
+
+
 def wanted_missing_page(
     base_url: str, api_key: str, page: int, page_size: int = 50,
     extra_params: dict | None = None,

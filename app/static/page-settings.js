@@ -754,6 +754,7 @@ async function _loadArrSettings(service) {
     document.getElementById(`${service}-url`).value = data.url || '';
     document.getElementById(`${service}-refresh-on-download`).checked = !!data.refresh_on_download;
     document.getElementById(`${service}-sync-wanted`).checked = !!data.sync_wanted;
+    document.getElementById(`${service}-skip-tag`).value = data.skip_tag || '';
   } catch (e) { /* the form simply stays as it was */ }
 }
 
@@ -767,6 +768,7 @@ async function _saveArrSettings(service) {
       api_key: document.getElementById(`${service}-api-key`).value,
       refresh_on_download: document.getElementById(`${service}-refresh-on-download`).checked,
       sync_wanted: document.getElementById(`${service}-sync-wanted`).checked,
+      skip_tag: document.getElementById(`${service}-skip-tag`).value.trim(),
     });
     document.getElementById(`${service}-api-key`).value = '';
     _feedback(`${service}-feedback`, 'Salvato.', 'success');

@@ -532,7 +532,9 @@ switch for syncing what it is missing.
 
 **Syncing the "wanted" list.** With this on, the panel periodically reads Sonarr's or Radarr's own
 list of monitored, missing episodes and movies, and tries to download each one here — the same
-pipeline a followed series uses, not a separate code path.
+pipeline a followed series uses, not a separate code path. Sonarr's own list is per-episode; the
+panel groups it by series first, so a show missing ten episodes is matched against the source once,
+not ten times.
 
 Matching is deliberately conservative, because downloading the wrong film or episode is not a
 mistake a retry fixes:
@@ -540,10 +542,19 @@ mistake a retry fixes:
 - A **Radarr** movie usually carries a TMDB id. The panel downloads only on an **exact match**
   against the id it already reads from the source's own title page — never a title that merely
   sounds right, even when nothing matches the id.
-- A **Sonarr** episode has no such id to confirm against — the source exposes no TVDB id — so the
-  match is title-and-year similarity above a high bar.
-- Anything that does not clear that bar lands in the **"Da verificare"** list on the same tab
-  instead of being guessed at. Search and request it by hand from there.
+- A **Sonarr** series carries no TVDB id this source exposes — Sonarr's own first choice — but the
+  source does publish an IMDB id, and so does Sonarr's own series record, so the match is just as
+  exact whenever Sonarr has one.
+- Only when neither side has an id to confirm with does matching fall back to title-and-year
+  similarity above a high bar.
+- Anything that does not clear that bar — or that had an id with nothing to confirm it against —
+  lands in the **"Da verificare"** list on the same tab instead of being guessed at. Search and
+  request it by hand from there.
+
+**Excluding a title from the sync.** A film or series you tag in Radarr/Sonarr with the label set
+under **Tag da escludere** is skipped entirely — not synced, and exempt from the generic
+post-download match below too, even if you download it by hand. Use it for anything you would
+rather manage yourself: Radarr/Sonarr's own download client, a different tool, or just by hand.
 
 In **modalità aperta**, a download the sync placed is retried on the next cycle if it actually
 fails after being submitted — a dead link, a stalled segment, the container restarting mid-download

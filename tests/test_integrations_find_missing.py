@@ -7,7 +7,7 @@ tests/test_download_hooks_arr_match.py).
 from app.integrations import radarr, sonarr
 
 
-def test_find_missing_movie_matches_by_exact_tmdb_id(monkeypatch):
+def test_find_missing_movie_matches_by_exact_tmdb_id(client, monkeypatch):
     monkeypatch.setattr(radarr, "get_config", lambda: ("http://radarr.local", "key"))
     monkeypatch.setattr(radarr.arr_client, "get", lambda *a, **k: [
         {"id": 1, "tmdbId": 111, "monitored": True, "hasFile": False},
@@ -19,7 +19,7 @@ def test_find_missing_movie_matches_by_exact_tmdb_id(monkeypatch):
     assert movie["id"] == 2
 
 
-def test_find_missing_movie_ignores_one_that_already_has_a_file(monkeypatch):
+def test_find_missing_movie_ignores_one_that_already_has_a_file(client, monkeypatch):
     monkeypatch.setattr(radarr, "get_config", lambda: ("http://radarr.local", "key"))
     monkeypatch.setattr(radarr.arr_client, "get", lambda *a, **k: [
         {"id": 1, "tmdbId": 111, "monitored": True, "hasFile": True},
@@ -28,7 +28,7 @@ def test_find_missing_movie_ignores_one_that_already_has_a_file(monkeypatch):
     assert radarr.find_missing_movie(111) is None
 
 
-def test_find_missing_movie_ignores_an_unmonitored_one(monkeypatch):
+def test_find_missing_movie_ignores_an_unmonitored_one(client, monkeypatch):
     monkeypatch.setattr(radarr, "get_config", lambda: ("http://radarr.local", "key"))
     monkeypatch.setattr(radarr.arr_client, "get", lambda *a, **k: [
         {"id": 1, "tmdbId": 111, "monitored": False, "hasFile": False},
@@ -54,7 +54,7 @@ def test_find_missing_movie_returns_none_on_a_network_error(monkeypatch):
     assert radarr.find_missing_movie(111) is None
 
 
-def test_find_missing_episode_matches_series_by_title_then_episode(monkeypatch):
+def test_find_missing_episode_matches_series_by_title_then_episode(client, monkeypatch):
     monkeypatch.setattr(sonarr, "get_config", lambda: ("http://sonarr.local", "key"))
 
     def fake_get(url, api_key, path, params=None):
@@ -83,7 +83,7 @@ def test_find_missing_episode_requires_a_close_series_title(monkeypatch):
     assert sonarr.find_missing_episode("Una Serie Qualunque", 1, "4") is None
 
 
-def test_find_missing_episode_ignores_one_that_already_has_a_file(monkeypatch):
+def test_find_missing_episode_ignores_one_that_already_has_a_file(client, monkeypatch):
     monkeypatch.setattr(sonarr, "get_config", lambda: ("http://sonarr.local", "key"))
 
     def fake_get(url, api_key, path, params=None):
@@ -224,3 +224,90 @@ def test_sonarr_import_into_library_skips_rescan_when_the_move_fails(monkeypatch
 
     assert ok is False
     assert calls == []
+
+
+# ── Skip tag ─────────────────────────────────────────────────────────────────
+
+def test_radarr_wanted_missing_filters_out_the_skip_tag(monkeypatch):
+    monkeypatch.setattr(radarr, "get_config", lambda: ("http://radarr.local", "key"))
+    monkeypatch.setattr(radarr, "get_skip_tag", lambda: "no-panel")
+    monkeypatch.setattr(radarr.arr_client, "resolve_tag_id", lambda *a, **k: 5)
+    monkeypatch.setattr(radarr.arr_client, "wanted_missing_all", lambda *a, **k: [
+        {"id": 1, "tags": [5]},
+        {"id": 2, "tags": [1, 2]},
+        {"id": 3, "tags": []},
+    ])
+
+    movies = radarr.wanted_missing()
+
+    assert [m["id"] for m in movies] == [2, 3]
+
+
+def test_radarr_wanted_missing_is_unfiltered_without_a_skip_tag(monkeypatch):
+    monkeypatch.setattr(radarr, "get_config", lambda: ("http://radarr.local", "key"))
+    monkeypatch.setattr(radarr, "get_skip_tag", lambda: "")
+    monkeypatch.setattr(radarr.arr_client, "wanted_missing_all", lambda *a, **k: [{"id": 1, "tags": [5]}])
+
+    movies = radarr.wanted_missing()
+
+    assert [m["id"] for m in movies] == [1]
+
+
+def test_find_missing_movie_skips_a_tagged_one(monkeypatch):
+    monkeypatch.setattr(radarr, "get_config", lambda: ("http://radarr.local", "key"))
+    monkeypatch.setattr(radarr, "get_skip_tag", lambda: "no-panel")
+    monkeypatch.setattr(radarr.arr_client, "resolve_tag_id", lambda *a, **k: 5)
+    monkeypatch.setattr(radarr.arr_client, "get", lambda *a, **k: [
+        {"id": 1, "tmdbId": 111, "monitored": True, "hasFile": False, "tags": [5]},
+    ])
+
+    assert radarr.find_missing_movie(111) is None
+
+
+def test_sonarr_wanted_missing_filters_out_series_with_the_skip_tag(monkeypatch):
+    monkeypatch.setattr(sonarr, "get_config", lambda: ("http://sonarr.local", "key"))
+    monkeypatch.setattr(sonarr, "get_skip_tag", lambda: "no-panel")
+    monkeypatch.setattr(sonarr.arr_client, "resolve_tag_id", lambda *a, **k: 9)
+    monkeypatch.setattr(sonarr.arr_client, "wanted_missing_all", lambda *a, **k: [
+        {"id": 1, "series": {"tags": [9]}},
+        {"id": 2, "series": {"tags": []}},
+    ])
+
+    episodes = sonarr.wanted_missing()
+
+    assert [e["id"] for e in episodes] == [2]
+
+
+def test_find_missing_episode_skips_a_tagged_series(monkeypatch):
+    monkeypatch.setattr(sonarr, "get_config", lambda: ("http://sonarr.local", "key"))
+    monkeypatch.setattr(sonarr, "get_skip_tag", lambda: "no-panel")
+    monkeypatch.setattr(sonarr.arr_client, "resolve_tag_id", lambda *a, **k: 9)
+    monkeypatch.setattr(sonarr.arr_client, "get", lambda *a, **k: [{"id": 10, "title": "Una Serie", "tags": [9]}])
+
+    assert sonarr.find_missing_episode("Una Serie", 1, "4") is None
+
+
+def test_resolve_tag_id_matches_case_insensitively(monkeypatch):
+    from app.integrations import arr_client
+
+    monkeypatch.setattr(arr_client, "get", lambda *a, **k: [{"id": 7, "label": "No-Panel"}])
+
+    assert arr_client.resolve_tag_id("http://x", "key", "no-panel") == 7
+
+
+def test_resolve_tag_id_returns_none_when_blank(monkeypatch):
+    from app.integrations import arr_client
+
+    assert arr_client.resolve_tag_id("http://x", "key", "") is None
+    assert arr_client.resolve_tag_id("http://x", "key", "   ") is None
+
+
+def test_resolve_tag_id_returns_none_on_network_error(monkeypatch):
+    from app.integrations import arr_client
+
+    def fail(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(arr_client, "get", fail)
+
+    assert arr_client.resolve_tag_id("http://x", "key", "no-panel") is None

@@ -56,6 +56,7 @@ EMPTY: dict = {
     "logo": None,
     "trailer_url": None,
     "tmdb_id": None,
+    "imdb_id": None,
     "name": None,
     "poster": None,
     "type": None,
@@ -186,6 +187,10 @@ def _from_props(props: dict) -> dict:
             f"https://www.youtube.com/watch?v={youtube_id}" if youtube_id else None
         ),
         "tmdb_id": props.get("tmdb_id"),
+        # Present for series too — unlike tmdb_id, read only by
+        # app.integrations.matching for an exact Sonarr match, since nothing
+        # else in the panel has a use for it yet.
+        "imdb_id": props.get("imdb_id"),
         # Measured against a real title before being added, as the rule above
         # requires: the page carries main_actors and main_directors as person
         # records, plus the original title, the release status, a quality

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 SETTING_SONARR_URL = "sonarr_url"
 SETTING_SONARR_API_KEY = "sonarr_api_key"
+SETTING_SONARR_SKIP_TAG = "sonarr_skip_tag"
 
 
 def get_config() -> tuple[str, str]:
@@ -21,6 +22,25 @@ def get_config() -> tuple[str, str]:
 def set_config(url: str, api_key: str) -> None:
     auth_models.set_setting(SETTING_SONARR_URL, (url or "").strip())
     auth_models.set_setting(SETTING_SONARR_API_KEY, (api_key or "").strip())
+
+
+def get_skip_tag() -> str:
+    """A Sonarr tag — on the series, not the episode — that keeps a show out
+    of this panel entirely: synced, and exempt from the generic post-download
+    match too, since the point of the tag is "hands off this one"."""
+    return (auth_models.get_setting(SETTING_SONARR_SKIP_TAG) or "").strip()
+
+
+def set_skip_tag(label: str) -> None:
+    auth_models.set_setting(SETTING_SONARR_SKIP_TAG, (label or "").strip())
+
+
+def _is_skipped(series: dict, url: str, api_key: str) -> bool:
+    label = get_skip_tag()
+    if not label:
+        return False
+    tag_id = arr_client.resolve_tag_id(url, api_key, label)
+    return tag_id is not None and tag_id in (series.get("tags") or [])
 
 
 def is_connected() -> bool:
@@ -96,6 +116,10 @@ def find_missing_episode(series_title: str, season: int, episode_number) -> dict
         )
         return None
 
+    if _is_skipped(best, url, api_key):
+        logger.info("Sonarr: «%s» is tagged to skip — not importing", best["title"])
+        return None
+
     try:
         episodes = arr_client.get(url, api_key, "episode", params={"seriesId": best["id"]})
     except Exception as exc:
@@ -118,7 +142,8 @@ def find_missing_episode(series_title: str, season: int, episode_number) -> dict
 
 
 def wanted_missing() -> list[dict]:
-    """Monitored episodes Sonarr has not downloaded yet, series included.
+    """Monitored episodes Sonarr has not downloaded yet, series included,
+    minus any whose series carries the configured skip tag.
 
     Empty — never raising — when unconfigured or unreachable: a sync cycle
     that cannot reach Sonarr this time has nothing to do, not a reason to
@@ -128,10 +153,18 @@ def wanted_missing() -> list[dict]:
     if not url or not api_key:
         return []
     try:
-        return arr_client.wanted_missing_all(url, api_key, extra_params={"includeSeries": "true"})
+        episodes = arr_client.wanted_missing_all(url, api_key, extra_params={"includeSeries": "true"})
     except Exception as exc:
         logger.warning("Sonarr wanted/missing failed: %s", type(exc).__name__)
         return []
+
+    label = get_skip_tag()
+    if not label:
+        return episodes
+    tag_id = arr_client.resolve_tag_id(url, api_key, label)
+    if tag_id is None:
+        return episodes
+    return [e for e in episodes if tag_id not in ((e.get("series") or {}).get("tags") or [])]
 
 
 def rescan_series(series_id: int | None = None) -> bool:

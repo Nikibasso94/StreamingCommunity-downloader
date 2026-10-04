@@ -1,15 +1,18 @@
 """Matching a Sonarr/Radarr "wanted" item to a title on the source.
 
-Radarr carries a TMDB id, which ``app.core.metadata`` already reads from the
-title page (the same id used for the stream fallback — see CLAUDE.md on
-``metadata.cached_tmdb_id``). Comparing the two is an exact match or nothing,
-never a guess, when Radarr gives one.
+Radarr carries a TMDB id, and Sonarr an IMDB one — both already read from the
+title page by ``app.core.metadata`` (the TMDB id for the stream fallback, see
+CLAUDE.md on ``metadata.cached_tmdb_id``; the IMDB one only for this).
+Comparing the two is an exact match or nothing, never a guess, whenever the
+*arr side gives an id: a wrong title that merely sounds right is worse than
+no match at all, and downloading the wrong film or episode is not a
+recoverable mistake the way a retried download is — see the "never
+substitute" rules in CLAUDE.md.
 
-Sonarr carries no id this source exposes (TVDB only), so a series match is
-title+year similarity above a high threshold; anything lower is left for a
-human to place by hand rather than risked. Downloading the wrong film or
-series is not a recoverable mistake the way a retried download is — see the
-"never substitute" rules in CLAUDE.md.
+The source exposes no TVDB id, which is Sonarr's own first choice — but it
+does carry IMDB, which Sonarr's series resource carries too (``imdbId``), so
+a series match can be exact just like a film's. Falling back to title+year
+similarity only happens when neither side has an id to confirm with.
 """
 
 import difflib
@@ -52,6 +55,23 @@ def _best_fuzzy(results: list[dict], title: str, year: str | None) -> dict | Non
     return None
 
 
+def _best_exact(results: list[dict], domain: str, media_type: str, field: str, value) -> dict | None:
+    """The one candidate whose title page reports ``field == value``, or
+    ``None`` — never a fuzzy fallback, since the caller only reaches here
+    with a real id to confirm against."""
+    version = page.get_domain_version(domain) or ""
+    for candidate in results:
+        try:
+            meta = metadata.title_metadata(
+                media_type, candidate["id"], candidate.get("slug") or "", version
+            )
+        except Exception:
+            continue
+        if meta.get(field) == value:
+            return candidate
+    return None
+
+
 def match_film(title: str, year: str | None, tmdb_id: int | None, domain: str) -> dict | None:
     """A Radarr movie against the source.
 
@@ -66,22 +86,25 @@ def match_film(title: str, year: str | None, tmdb_id: int | None, domain: str) -
         return None
 
     if tmdb_id:
-        version = page.get_domain_version(domain) or ""
-        for candidate in results:
-            try:
-                meta = metadata.title_metadata(
-                    resolver.FILM, candidate["id"], candidate.get("slug") or "", version
-                )
-            except Exception:
-                continue
-            if meta.get("tmdb_id") == tmdb_id:
-                return candidate
-        return None
+        return _best_exact(results, domain, resolver.FILM, "tmdb_id", tmdb_id)
 
     return _best_fuzzy(results, title, year)
 
 
-def match_series(title: str, year: str | None, domain: str) -> dict | None:
-    """A Sonarr series against the source. Best-effort: no id to confirm it with."""
+def match_series(title: str, year: str | None, domain: str, imdb_id: str | None = None) -> dict | None:
+    """A Sonarr series against the source.
+
+    An exact ``imdb_id`` match when Sonarr gives one — the source has no
+    TVDB id, Sonarr's own first choice, but does carry IMDB, and Sonarr's own
+    series resource does too. Nothing, not a fuzzy fallback, when an imdb_id
+    was given and no candidate carries it. Only falls back to title+year
+    similarity when Sonarr itself has no imdb_id to confirm against.
+    """
     results = page.search(title, domain, media_type="tv")
+    if not results:
+        return None
+
+    if imdb_id:
+        return _best_exact(results, domain, resolver.EPISODE, "imdb_id", imdb_id)
+
     return _best_fuzzy(results, title, year)

@@ -27,7 +27,7 @@ def _clear_pending_results():
 
 SONARR_EPISODE = {
     "id": 501, "seriesId": 10, "seasonNumber": 1, "episodeNumber": 4,
-    "series": {"title": "Una Serie", "year": 2019},
+    "series": {"id": 10, "title": "Una Serie", "year": 2019},
 }
 
 RADARR_MOVIE = {"id": 601, "title": "Un Film", "year": 2020, "tmdbId": 12345}
@@ -397,3 +397,89 @@ def test_reconcile_clears_orphaned_downloading_rows(client):
 
 def test_reconcile_is_a_noop_with_nothing_stuck(client):
     assert sync.reconcile_orphaned_downloads() == 0
+
+
+# ── Grouping Sonarr's missing episodes by series ────────────────────────────
+
+SONARR_EPISODE_2 = {
+    "id": 502, "seriesId": 10, "seasonNumber": 1, "episodeNumber": 5,
+    "series": {"id": 10, "title": "Una Serie", "year": 2019},
+}
+
+OTHER_SERIES_EPISODE = {
+    "id": 601, "seriesId": 20, "seasonNumber": 2, "episodeNumber": 1,
+    "series": {"id": 20, "title": "Un'Altra Serie", "year": 2021},
+}
+
+
+def test_group_episodes_by_series_groups_by_series_id():
+    groups = sync.group_episodes_by_series([SONARR_EPISODE, SONARR_EPISODE_2, OTHER_SERIES_EPISODE])
+
+    assert [series["id"] for series, _ in groups] == [10, 20]
+    assert [e["id"] for e in groups[0][1]] == [501, 502]
+    assert [e["id"] for e in groups[1][1]] == [601]
+
+
+def test_process_sonarr_series_matches_once_for_multiple_episodes(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    open_panel.episodes.append({"id": 905, "n": "5", "name": "Episodio 5"})
+    match_calls = []
+    monkeypatch.setattr(
+        matching, "match_series",
+        lambda *a, **k: match_calls.append(1) or _series_candidate(),
+    )
+
+    outcomes = sync.process_sonarr_series(
+        "example.test", SONARR_EPISODE["series"], [SONARR_EPISODE, SONARR_EPISODE_2],
+    )
+
+    assert match_calls == [1]  # one search, not one per episode
+    assert outcomes == {"downloading": 2}
+    assert [name for name, _, _ in stub_jobs] == ["submit_episode", "submit_episode"]
+
+
+def test_process_sonarr_series_passes_the_series_imdb_id_to_the_matcher(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    match_args = []
+    monkeypatch.setattr(
+        matching, "match_series",
+        lambda *a, **k: match_args.append(a) or _series_candidate(),
+    )
+
+    series_with_imdb = {**SONARR_EPISODE["series"], "imdbId": "tt0903747"}
+    sync.process_sonarr_series("example.test", series_with_imdb, [SONARR_EPISODE])
+
+    assert match_args == [("Una Serie", "2019", "example.test", "tt0903747")]
+
+
+def test_process_sonarr_series_parks_every_pending_episode_without_a_match(client, monkeypatch):
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: None)
+
+    outcomes = sync.process_sonarr_series(
+        "example.test", SONARR_EPISODE["series"], [SONARR_EPISODE, SONARR_EPISODE_2],
+    )
+
+    assert outcomes == {"needs_review": 2}
+    assert sync.get_seen("sonarr", "501")["status"] == "needs_review"
+    assert sync.get_seen("sonarr", "502")["status"] == "needs_review"
+
+
+def test_process_sonarr_series_skips_already_settled_episodes(client, monkeypatch):
+    sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    match_calls = []
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1))
+
+    outcomes = sync.process_sonarr_series(
+        "example.test", SONARR_EPISODE["series"], [SONARR_EPISODE],
+    )
+
+    assert outcomes == {"downloaded": 1}
+    assert match_calls == []  # nothing pending, so no search at all
+
+
+def test_process_sonarr_series_is_a_noop_with_nothing_pending_and_no_episodes():
+    assert sync.process_sonarr_series("example.test", {"title": "Una Serie"}, []) == {}
