@@ -160,3 +160,29 @@ def test_a_film_job_never_triggers_the_sonarr_episode_lookup(monkeypatch):
     downloads_hooks._maybe_refresh_sonarr(_film_job())
 
     assert calls == ["rescan"]
+
+
+# ── Ordering: Sonarr/Radarr before Jellyfin/Plex ────────────────────────────
+
+def test_sonarr_radarr_run_before_jellyfin_and_plex(monkeypatch):
+    """Jellyfin/Plex only rescan wherever the file already is; Sonarr/Radarr
+    can still move it after this point. Scanning first would see nothing at
+    the file's final location, and never look there again once the move
+    happens a moment later — see the commit message for why this was wrong."""
+    save_settings({
+        **get_settings(),
+        "jellyfin_refresh_on_download": True,
+        "plex_refresh_on_download": True,
+    })
+    calls = []
+    monkeypatch.setattr(downloads_hooks, "_maybe_refresh_sonarr", lambda job: calls.append("sonarr"))
+    monkeypatch.setattr(downloads_hooks, "_maybe_refresh_radarr", lambda job: calls.append("radarr"))
+    monkeypatch.setattr(downloads_hooks, "_maybe_refresh_jellyfin", lambda: calls.append("jellyfin"))
+    monkeypatch.setattr(downloads_hooks, "_maybe_refresh_plex", lambda: calls.append("plex"))
+
+    downloads_hooks.on_job_finished(_film_job())
+
+    assert calls.index("sonarr") < calls.index("jellyfin")
+    assert calls.index("sonarr") < calls.index("plex")
+    assert calls.index("radarr") < calls.index("jellyfin")
+    assert calls.index("radarr") < calls.index("plex")

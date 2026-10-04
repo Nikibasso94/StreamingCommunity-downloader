@@ -239,10 +239,15 @@ def on_job_finished(job) -> None:
         return
 
     if status == "done":
-        _maybe_refresh_jellyfin()
-        _maybe_refresh_plex()
+        # Sonarr/Radarr first: when one of them claims the file, it moves it
+        # out of the panel's own library into its own folder before Jellyfin
+        # or Plex ever look. Either of those scanning first would find
+        # nothing yet at the file's final location, and not look there
+        # again once the move actually happens a moment later.
         _maybe_refresh_sonarr(job)
         _maybe_refresh_radarr(job)
+        _maybe_refresh_jellyfin()
+        _maybe_refresh_plex()
 
     tokens = job_tokens(job)
     for hook in list_enabled_for_event(status):
