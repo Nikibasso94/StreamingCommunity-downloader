@@ -584,6 +584,17 @@ Sonarr were each checked against a file carrying an unrelated name and found it 
 as it sits in the right folder (Sonarr still needs a season/episode number *somewhere* in the name,
 to tell episodes apart within one series — a film's whole folder is unambiguously one title).
 
+**This requires the panel's own container to see Radarr's/Sonarr's library folders, mounted
+read-write, at the exact same path inside the container that Radarr/Sonarr themselves use.** The
+destination is whatever `path` Radarr/Sonarr report over their own API, used as-is — nothing about
+it is translated or configured on this panel. Mount a *different* folder at that same path in the
+panel's container (a different share, a different bind mount, even one that happens to have the
+same name) and the move still "succeeds" from the panel's point of view: it writes the file
+somewhere, just not where Radarr/Sonarr — or Windows Explorer, or anything else looking at the real
+library — will ever see it. Give the panel's container the same volume(s) Radarr/Sonarr already use
+for their libraries, mounted at the same container path those use, the same way this panel's own
+library folder is already mounted for Jellyfin.
+
 Right after that rescan, the panel also asks Radarr/Sonarr to rename the file
 (`RenameMovie`/`RenameSeries`) — their own command, their own naming settings. Verified against a
 real Sonarr: dropped straight into the series' root folder, a file sits there as a flat file until
