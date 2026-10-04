@@ -293,8 +293,22 @@ def _maybe_refresh_sonarr(job) -> None:
     output_path = getattr(job, "output_path", None)
     if job.type == "episode" and media_label and season is not None and episode_number and output_path:
         episode = sonarr.find_missing_episode(media_label, season, episode_number)
-        if episode is not None and sonarr.import_into_library(output_path, episode):
+        if episode is None:
+            logger.info(
+                "Sonarr: no missing match for «%s» S%02dE%s — plain rescan only",
+                media_label, season, episode_number,
+            )
+        elif sonarr.import_into_library(output_path, episode):
+            logger.info(
+                "Sonarr: imported «%s» S%02dE%s into %s",
+                media_label, season, episode_number, episode["series"]["path"],
+            )
             return
+        else:
+            logger.warning(
+                "Sonarr: found «%s» S%02dE%s but could not move the file — plain rescan only",
+                media_label, season, episode_number,
+            )
 
     sonarr.rescan_series()
 
@@ -318,8 +332,15 @@ def _maybe_refresh_radarr(job) -> None:
     output_path = getattr(job, "output_path", None)
     if job.type == "film" and tmdb_id and output_path:
         movie = radarr.find_missing_movie(tmdb_id)
-        if movie is not None and radarr.import_into_library(output_path, movie):
+        if movie is None:
+            logger.info("Radarr: no missing match for tmdb_id %s — plain rescan only", tmdb_id)
+        elif radarr.import_into_library(output_path, movie):
+            logger.info("Radarr: imported tmdb_id %s into %s", tmdb_id, movie["path"])
             return
+        else:
+            logger.warning(
+                "Radarr: found tmdb_id %s but could not move the file — plain rescan only", tmdb_id,
+            )
 
     radarr.rescan_movie()
 

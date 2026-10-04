@@ -90,6 +90,10 @@ def find_missing_episode(series_title: str, season: int, episode_number) -> dict
         if score > best_score:
             best, best_score = series, score
     if best is None or best_score < SERIES_MATCH_THRESHOLD:
+        logger.info(
+            "Sonarr: no series close enough to «%s» (best: %r, score %.2f)",
+            series_title, best.get("title") if best else None, best_score,
+        )
         return None
 
     try:
@@ -98,9 +102,18 @@ def find_missing_episode(series_title: str, season: int, episode_number) -> dict
         logger.warning("Sonarr episode lookup failed: %s", type(exc).__name__)
         return None
     for episode in episodes or []:
-        if episode.get("seasonNumber") == season and str(episode.get("episodeNumber")) == str(episode_number) \
-                and episode.get("monitored") and not episode.get("hasFile"):
-            return {**episode, "series": best}
+        if episode.get("seasonNumber") == season and str(episode.get("episodeNumber")) == str(episode_number):
+            if episode.get("monitored") and not episode.get("hasFile"):
+                return {**episode, "series": best}
+            logger.info(
+                "Sonarr: matched «%s» S%02dE%s but it is %s — nothing to import",
+                best["title"], season, episode_number,
+                "already on disk" if episode.get("hasFile") else "not monitored",
+            )
+            return None
+    logger.info(
+        "Sonarr: matched series «%s» but it has no S%02dE%s", best["title"], season, episode_number,
+    )
     return None
 
 

@@ -75,8 +75,15 @@ def find_missing_movie(tmdb_id: int) -> dict | None:
         logger.warning("Radarr movie lookup by tmdb_id failed: %s", type(exc).__name__)
         return None
     for movie in movies or []:
-        if movie.get("tmdbId") == tmdb_id and movie.get("monitored") and not movie.get("hasFile"):
-            return movie
+        if movie.get("tmdbId") == tmdb_id:
+            if movie.get("monitored") and not movie.get("hasFile"):
+                return movie
+            logger.info(
+                "Radarr: matched tmdb_id %s but it is %s — nothing to import",
+                tmdb_id, "already on disk" if movie.get("hasFile") else "not monitored",
+            )
+            return None
+    logger.info("Radarr: no movie for tmdb_id %s", tmdb_id)
     return None
 
 
