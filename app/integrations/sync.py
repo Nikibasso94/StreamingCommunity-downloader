@@ -240,7 +240,7 @@ _NOT_MATCHED = object()
 
 
 def _retry_handoff(service: str, record: dict, media_type: str, title: str,
-                    year: str | None, season, episode_number) -> None:
+                    year: str | None, season, episode_number) -> bool:
     """Hand a file this module already downloaded to Sonarr/Radarr again,
     for an item their own wanted/missing list still carries here — proof a
     prior hand-off (``app.downloads_hooks``, right after that download
@@ -251,31 +251,54 @@ def _retry_handoff(service: str, record: dict, media_type: str, title: str,
     exactly where a finished download already left it, the same way the
     library check above finds it, and handed to the same
     ``import_into_library`` a fresh download's own hook would have used.
+
+    Returns whether a file was actually found to hand off — not whether the
+    hand-off itself succeeded. ``_settled_status`` needs that distinction: a
+    hand-off that fails (Sonarr/Radarr unreachable right now) is still worth
+    retrying next cycle, but a status claiming "downloaded" for a file that
+    is not there *anywhere* any more — moved or deleted by hand, most likely
+    while chasing this exact problem — is simply wrong, and no amount of
+    retrying ever finds it.
     """
     draft = _draft_request(media_type, {"id": 0, "slug": None, "poster": None},
                             season, episode_number, title, year)
     path = resolver.existing_file(draft)
     if path is None:
-        return
+        return False
     module = sonarr if service == "sonarr" else radarr
     try:
         module.import_into_library(path, record)
     except Exception:
         logger.exception("%s: retrying the hand-off for «%s» failed", service, title)
+    return True
 
 
 def _settled_status(service: str, record: dict, media_type: str, title: str,
                      year: str | None, season, episode_number) -> str | None:
     """``None`` when there is nothing settled yet and the item still needs
-    matching. Otherwise the settled status, after first retrying the
-    Sonarr/Radarr hand-off if that status is one a prior attempt may not
-    have actually completed — see ``_retry_handoff``.
+    matching — either because it was never seen, or because a "downloaded"/
+    "already_in_library" status turned out to be stale (see below), in both
+    cases so the normal match-and-download path runs for it this very cycle.
+    Otherwise the settled status, after first retrying the Sonarr/Radarr
+    hand-off if that status is one a prior attempt may not have actually
+    completed — see ``_retry_handoff``.
     """
-    existing = get_seen(service, str(record.get("id")))
+    external_key = str(record.get("id"))
+    existing = get_seen(service, external_key)
     if not existing or existing["status"] not in SETTLED_STATUSES:
         return None
     if existing["status"] in ("downloaded", "already_in_library"):
-        _retry_handoff(service, record, media_type, title, year, season, episode_number)
+        if _retry_handoff(service, record, media_type, title, year, season, episode_number):
+            return existing["status"]
+        logger.info(
+            "%s: «%s» was marked %s but its file is gone — treating it as not downloaded",
+            service, title, existing["status"],
+        )
+        db.execute(
+            "DELETE FROM jf_arr_sync_seen WHERE service = ? AND external_key = ?",
+            (service, external_key),
+        )
+        return None
     return existing["status"]
 
 

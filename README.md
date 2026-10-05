@@ -575,6 +575,11 @@ wanted/missing list still carries the episode or film in question. Nothing about
 **"Da verificare"**: that list is only for a title the matcher itself could not place, not for one
 already matched, downloaded and simply not yet delivered.
 
+And if that file is not there any more either — moved or deleted by hand, most likely while chasing
+this exact problem before it was fixed — the sync notices there is nothing left to hand off and
+downloads it again from scratch, rather than leaving it marked "already downloaded" forever with
+nothing anywhere to show for it.
+
 **A manual download gets the same treatment, not only a synced one.** After *any* finished film or
 episode — a manual search, a followed series, the sync, it makes no difference — the post-download
 refresh checks whether it is something Radarr/Sonarr themselves are missing: a film by the exact

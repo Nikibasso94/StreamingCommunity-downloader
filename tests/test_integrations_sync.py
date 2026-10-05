@@ -370,8 +370,11 @@ def test_an_untracked_job_is_a_noop(client):
     assert sync.get_seen("sonarr", "999")["status"] == "needs_review"
 
 
-def test_a_settled_downloaded_item_is_not_reprocessed(client, open_panel, monkeypatch):
+def test_a_settled_downloaded_item_with_its_file_still_there_is_not_reprocessed(
+    client, open_panel, monkeypatch,
+):
     sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    _write_existing_episode_file(open_panel)
     match_calls = []
     monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1))
 
@@ -436,15 +439,27 @@ def test_an_already_in_library_sonarr_item_also_retries_the_hand_off(client, ope
     assert len(calls) == 1
 
 
-def test_the_hand_off_retry_does_nothing_without_a_file_on_disk(client, open_panel, monkeypatch):
+def test_a_downloaded_item_with_a_gone_file_is_cleared_and_redownloaded(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    """Marked "downloaded" by an earlier cycle, but the file is not at its
+    expected destination any more — moved or deleted by hand, most likely
+    while chasing this exact problem. Nothing is left anywhere to hand off,
+    so the status was simply wrong: cleared, and the item goes through the
+    normal match-and-download path again this same cycle, instead of
+    staying stuck forever with no file and no way to ever get one."""
     sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
     calls = []
     monkeypatch.setattr(sonarr, "import_into_library", lambda *a, **k: calls.append(1) or True)
 
     outcome = sync.process_sonarr_item("example.test", SONARR_EPISODE)
 
-    assert outcome == "downloaded"
-    assert calls == []
+    assert outcome == "downloading"
+    assert calls == []  # nothing to hand off — no file was ever found
+    assert [name for name, _, _ in stub_jobs] == ["submit_episode"]
+    assert sync.get_seen("sonarr", "501")["status"] == "downloading"
 
 
 def test_a_downloaded_radarr_item_still_wanted_retries_the_hand_off(client, open_panel, monkeypatch):
@@ -473,6 +488,19 @@ def test_a_grouped_sonarr_series_also_retries_a_downloaded_episode_s_hand_off(
 
     assert outcomes == {"downloaded": 1}
     assert len(calls) == 1
+
+
+def test_a_grouped_series_redownloads_an_episode_whose_file_is_gone(
+    client, open_panel, stub_jobs, monkeypatch,
+):
+    sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    open_panel.episodes.append({"id": 904, "n": "4", "name": "Episodio 4"})
+    monkeypatch.setattr(matching, "match_series", lambda *a, **k: _series_candidate())
+
+    outcomes = sync.process_sonarr_series("example.test", SONARR_EPISODE["series"], [SONARR_EPISODE])
+
+    assert outcomes == {"downloading": 1}
+    assert [name for name, _, _ in stub_jobs] == ["submit_episode"]
 
 
 # ── Startup reconciliation ──────────────────────────────────────────────────
@@ -563,8 +591,9 @@ def test_process_sonarr_series_parks_every_pending_episode_without_a_match(clien
     assert sync.get_seen("sonarr", "502")["status"] == "needs_review"
 
 
-def test_process_sonarr_series_skips_already_settled_episodes(client, monkeypatch):
+def test_process_sonarr_series_skips_already_settled_episodes(client, open_panel, monkeypatch):
     sync.record_seen("sonarr", "501", "downloaded", "Una Serie")
+    _write_existing_episode_file(open_panel)
     match_calls = []
     monkeypatch.setattr(matching, "match_series", lambda *a, **k: match_calls.append(1))
 
@@ -573,7 +602,7 @@ def test_process_sonarr_series_skips_already_settled_episodes(client, monkeypatc
     )
 
     assert outcomes == {"downloaded": 1}
-    assert match_calls == []  # nothing pending, so no search at all
+    assert match_calls == []  # its file is still there, so no search at all
 
 
 def test_process_sonarr_series_is_a_noop_with_nothing_pending_and_no_episodes():
