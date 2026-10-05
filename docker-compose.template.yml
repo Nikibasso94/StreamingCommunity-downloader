@@ -16,7 +16,7 @@
 
 services:
   web:
-    image: ghcr.io/edoardofiore/streamingcommunity-downloader:latest
+    image: ghcr.io/nikibasso94/streamingcommunity-downloader:latest
     ports:
       - "8000:8000"
     volumes:

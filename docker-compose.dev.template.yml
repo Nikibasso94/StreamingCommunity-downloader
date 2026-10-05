@@ -19,7 +19,7 @@
 
 services:
   web:
-    image: ghcr.io/edoardofiore/streamingcommunity-downloader-dev:dev
+    image: ghcr.io/nikibasso94/streamingcommunity-downloader-dev:dev
     # Il tag `dev` è mobile: senza questo, `up -d` riusa l'immagine già scaricata
     # e non vedresti mai le modifiche appena pushate.
     pull_policy: always

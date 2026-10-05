@@ -101,6 +101,13 @@
       Authentication is opt-in; the panel also runs open.</sub>
     </td>
   </tr>
+  <tr>
+    <td colspan="2" valign="top">
+      <img src="docs/integrations.png" alt="Integrations"/><br/>
+      <sub><b>Integrazioni</b> — Plex, Sonarr and Radarr, each with its own connection and
+      switches; see "Sonarr and Radarr" below for what the sync and the skip tag actually do.</sub>
+    </td>
+  </tr>
 </table>
 
 ---
@@ -140,7 +147,7 @@
 ### Docker (recommended)
 
 ```bash
-curl -O https://raw.githubusercontent.com/EdoardoFiore/StreamingCommunity-downloader/main/docker-compose.template.yml
+curl -O https://raw.githubusercontent.com/Nikibasso94/StreamingCommunity-downloader/main/docker-compose.template.yml
 # Edit the volume paths — create the config one — then:
 docker compose -f docker-compose.template.yml up -d
 ```
@@ -151,7 +158,7 @@ use: it is not shipped in the image, because it rotates.
 The image is published to GitHub Container Registry on every push to `main`:
 
 ```
-ghcr.io/edoardofiore/streamingcommunity-downloader:latest
+ghcr.io/nikibasso94/streamingcommunity-downloader:latest
 ```
 
 ### Portainer
@@ -163,7 +170,7 @@ below, edit the two `device:` paths to real, already-existing directories on the
 ```yaml
 services:
   web:
-    image: ghcr.io/edoardofiore/streamingcommunity-downloader:latest
+    image: ghcr.io/nikibasso94/streamingcommunity-downloader:latest
     ports:
       - "8000:8000"
     volumes:
@@ -224,15 +231,15 @@ Every push to a branch other than `main` publishes to a **separate** package, so
 build can never be pulled by a deployment pointing at the release image:
 
 ```
-ghcr.io/edoardofiore/streamingcommunity-downloader-dev:dev          # the latest branch build
-ghcr.io/edoardofiore/streamingcommunity-downloader-dev:my-branch    # that branch only
-ghcr.io/edoardofiore/streamingcommunity-downloader-dev:sha-abc1234  # one exact commit
+ghcr.io/nikibasso94/streamingcommunity-downloader-dev:dev          # the latest branch build
+ghcr.io/nikibasso94/streamingcommunity-downloader-dev:my-branch    # that branch only
+ghcr.io/nikibasso94/streamingcommunity-downloader-dev:sha-abc1234  # one exact commit
 ```
 
 Tests have to pass first: a red `pytest -q` publishes nothing.
 
 ```bash
-curl -O https://raw.githubusercontent.com/EdoardoFiore/StreamingCommunity-downloader/main/docker-compose.dev.template.yml
+curl -O https://raw.githubusercontent.com/Nikibasso94/StreamingCommunity-downloader/main/docker-compose.dev.template.yml
 # Point panel_config_dev at a NEW directory, then:
 docker compose -f docker-compose.dev.template.yml up -d
 ```
@@ -244,7 +251,7 @@ production config volume upgrades the real database with no way back.
 ### From source
 
 ```bash
-git clone https://github.com/EdoardoFiore/StreamingCommunity-downloader.git
+git clone https://github.com/Nikibasso94/StreamingCommunity-downloader.git
 cd StreamingCommunity-downloader
 pip install -r requirements.txt
 python main.py
@@ -270,7 +277,7 @@ answer to the setup question, which would then be asked again on every restart.
 To stay on v1, pin the tag instead of following `latest`:
 
 ```yaml
-image: ghcr.io/edoardofiore/streamingcommunity-downloader:1.0.0
+image: ghcr.io/nikibasso94/streamingcommunity-downloader:1.0.0
 ```
 
 If you were running the `-jellyfin` image from the development branch, change the `image:` line to
